@@ -1,0 +1,15 @@
+name: lbs-vault
+version: "1.0.0"
+description: >
+  LBS password vault tools. List stored handles, ask Leo for a secret through
+  Rubric's masked native field, check a request, and run a root-approved command
+  template that receives the secret on protected stdin. The model never sees,
+  passes, or retrieves a secret value.
+author: LBS
+license: MIT
+tags: [security, secrets, vault]
+provides_tools:
+  - vault_list
+  - vault_request
+  - vault_status
+  - vault_use

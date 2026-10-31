@@ -1,112 +1,27 @@
-# secret-drop
+# LBS password vault
 
-Give Hermes a password or token without putting it in the chat or showing it to the model.
+Encrypted Spark vault service, root broker, and staged handle-only Hermes plugin. Native masked entry is owned by Rubric, using [the exact API contract](docs/VAULT-API.md). Values travel directly from native field over tailnet HTTPS, never through Telegram or agent arguments.
 
-This is a standalone Hermes plugin. It is not part of the Hermes core tree. Install the repository root into `~/.hermes/plugins/`. That is the distribution path described in [CONTRIBUTING.md](https://github.com/NousResearch/hermes-agent/blob/main/CONTRIBUTING.md) and [Build a Hermes Plugin](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins).
+## Components
 
-## What it does
+- `lbs_vault/store.py`: whole-document Fernet encryption, owner binding, single-use expiring requests, private atomic storage and metadata audit.
+- `lbs_vault/service.py`: loopback-only HTTP entry with per-device bearer auth, bounded bodies, Host/Origin checks, rate limiting; root-only Unix agent socket.
+- `lbs_vault/broker.py`: separate root process, fixed approved target templates, secret on protected stdin, timeout/output bounds and exact redaction.
+- `plugin/`: install under `/root/.hermes/plugins/lbs-vault/`; tools list/request/status/use only. No get tool or generic env injection.
+- `scripts/install.sh`, `scripts/uninstall.sh`, `systemd/`: root operator deployment, preserving unrelated Tailscale paths; no gateway restart.
 
-Hermes Desktop shows a key button beside the composer and a command-palette entry, **Give Hermes a secret**. The masked field sends the value once, over the gateway connection you already use (local backend, remote gateway, or SSH tunnel), to this plugin's API at `/api/plugins/secret-drop/drop`.
+Default storage `/root/.hermes/lbs-vault/`, `LBS_VAULT_DIR` overrides for isolated testing. Default HTTP loopback port 8738, `LBS_VAULT_PORT` overrides. No package installation or network downloads at install time; system Python 3 with cryptography is required. See [keys and recovery](docs/KEYS.md) and [broker configuration](docs/BROKER.md).
 
-On that gateway host the plugin:
+Operator runs `sudo scripts/install.sh` only after reviewing this tree. Device provisioning uses `python3 -m lbs_vault.provision`; token goes to a new 0600 file, never stdout. Install does not provision real devices, add command targets, activate Hermes configuration, or restart the gateway. An empty templates list means all use is refused. Explicitly approve target templates in root-owned config before use. No thedoorpc commands ship or run.
 
-1. opens a new owner-only file under `secret-drops/`,
-2. writes the secret and reads those same bytes back,
-3. saves them in the profile `.env` (mode `0600`) under the name you chose, and checks the read-back,
-4. deletes the file.
+Tests use fake canaries and temporary dirs. Run `python3 -m pytest -q` in an isolated sandbox; no real hosts or real credentials. Installation/live validation are separate owner gates; no claim of deployed availability from unit tests.
 
-The response does not contain the value. Nothing is written into the transcript unless you leave **Tell Hermes the variable name** checked. That message names the variable only, for example `$DEPLOY_PASSWORD`. If storing succeeds and the follow-up message fails, the dialog says the secret is stored.
+## Clean cutover
 
-When the dashboard is serving more than one profile, the desktop `profile` query selects which profile receives the value. A request for another profile does not write the launch profile's `.env`.
+Upstream Secret Drop plaintext `.env` persistence, desktop web UI, dashboard endpoint, passthrough configuration, and old plugin hooks were removed. There is deliberately no compatibility alias or migration reading existing secrets. Do not install repository root as the former secret-drop plugin; use the staged `plugin/` directory through the installer. No Secret Source registration: that contract exports values to the agent environment and conflicts with this product's no-env requirement.
 
-Custom names are added to the raw `terminal.env_passthrough` list, so later sandboxed commands can expand `$NAME`. That write does not save the defaults-merged config, so `${...}` templates already in `config.yaml` stay templates. Provider and platform credentials such as `OPENAI_API_KEY` or `GITHUB_TOKEN` are stored but not forwarded.
+The root agent trust boundary is explicit: same-privilege malicious code can read root memory/files. This design prevents ordinary handle-only tools from retrieving values; it cannot sandbox a compromised root Hermes process. Templates must be trusted and not encode, transform, persist, or forward secrets to unapproved parties. Exact output redaction is not DLP against malicious targets.
 
-If a command prints the raw value, tool output replaces it with `«redacted-vault-secret»` only when the value is specific enough to redact: at least 8 characters and containing a digit or symbol, or at least 24 characters. A short value or a plain word such as `password` is stored, and is not used as a global search-and-replace. Hermes keeps at most 64 of these exact values in memory per profile; this plugin records the variable names in `secret-drop-names` and registers the values again on session start. A command that encodes the value first is not covered by that exact-match redaction.
+## Changes
 
-The same guidance is added to the session prompt when Hermes supports plugin prompt sections. The bundled skill `secret-drop:secret-drop` is listed by `skills_list` and is not copied into `~/.hermes/skills/`.
-
-`/secret` in a local terminal asks for the name, then reads the value from a hidden prompt. On Telegram, Discord, and the other messaging platforms, `/secret` stores nothing and does not repeat the argument. Chat is the wrong place for a password.
-
-## Security model — what this does and does not guarantee
-
-This plugin solves one specific problem: it keeps a secret out of the chat
-transcript, the model prompt, and prompt caches. It is **not** a sandbox that
-hides the value from the model.
-
-**What it guarantees:**
-
-- The value never enters the chat or the model context. The model only ever
-  sees the variable name (`$DEPLOY_PASSWORD`), never the value.
-- The value is stored in the profile `.env` with owner-only permissions
-  (mode `0600`), and the temporary drop file is deleted after storing.
-- Tool output that prints the raw value is redacted
-  (`«redacted-vault-secret»`) when the value is specific enough to match.
-
-**What it does NOT guarantee:**
-
-- The model has tools (terminal, file reads) and can read the value if it
-  wants to — for example `cat ~/.hermes/.env` or `echo $DEPLOY_PASSWORD`.
-  Redaction is exact-match only: a command that encodes the value first
-  (base64, hex, character-by-character) is not covered.
-- This is a convenience and a default-safety layer against *accidental*
-  leaks, not a security boundary against a malicious or compromised model.
-
-**Rule of thumb:** trust this plugin to keep secrets out of prompts and
-transcripts. Do **not** trust it as a security boundary against a model that
-deliberately tries to read the value — for that you need real secret
-isolation (for example secrets held in a separate process the model cannot
-reach).
-
-## Limits
-
-The value must be non-empty ASCII, at most 8192 characters, and must not contain a line break or a NUL. Names have to be normal environment variable names. Hermes refuses names that steer a subprocess (`PATH`, `LD_PRELOAD`, `PYTHONPATH`, and the rest of that denylist).
-
-## Layout
-
-`plugin.yaml` sits at the repository root. Hermes then records the allow-list entry as the manifest name `secret-drop`. That is the same string as the dashboard manifest and the desktop plugin id, and it is the path segment in `POST /api/plugins/secret-drop/drop`.
-
-A `plugin.yaml` nested in a subdirectory is recorded as a path key (`hermes-secret-drop/hermes-secret-drop/plugin`). The dashboard gate compares the request path to `plugins.enabled` and does not accept that path key, so the call returns 404 `Plugin not found`.
-
-```
-hermes-secret-drop/
-├── plugin.yaml                 # name: secret-drop
-├── __init__.py                 # /secret, session-start redaction reload, session prompt
-├── secret_drop.py              # file drop, .env store, wipe
-├── skills/secret-drop/SKILL.md
-├── dashboard/
-│   ├── manifest.json           # name: secret-drop
-│   └── plugin_api.py           # POST /api/plugins/secret-drop/drop
-└── desktop/
-    └── plugin.js               # id: secret-drop, locales included
-```
-
-Hermes loads that one file as a script. A second module next to it, including `import './i18n'`, is rejected, and the key button does not register.
-
-The agent half follows `plugins.enabled` and needs a gateway restart so the route is mounted. The desktop half stays off until its own switch is on.
-
-## Install
-
-Install the repository root, not a subdirectory.
-
-```bash
-hermes plugins install Goitonthefloor/hermes-secret-drop
-hermes plugins enable secret-drop
-```
-
-```text
-hermes://plugin/install?repo=Goitonthefloor/hermes-secret-drop
-```
-
-`plugins.enabled` must contain `secret-drop`. Remove a path key such as `hermes-secret-drop/hermes-secret-drop/plugin`, and delete a leftover checkout under `~/.hermes/plugins/hermes-secret-drop/` that still has `plugin/plugin.yaml` inside it. Restart the gateway after enabling.
-
-In Hermes Desktop, turn on **Secret drop** under **Capabilities → Plugins**. The key sits in the composer, to the left of the model pill.
-
-A catalog entry is a separate reviewed pull request in `NousResearch/hermes-agent` `plugin-catalog/`, pinned to an exact commit of this repo. Do not add this plugin to the Hermes core tree.
-
-## Tests
-
-From this directory, with the Hermes checkout importable:
-
-```bash
-PYTHONPATH=/path/to/hermes-agent python -m pytest tests/test_drop.py
-```
+2026-10-31: replaced plaintext Secret Drop with encrypted owner-scoped LBS vault; documented device provisioning, client HTTP API, broker templates, key backup and operational gates. Security evidence and deployment status: `docs/SECURITY-REVIEW.md`.

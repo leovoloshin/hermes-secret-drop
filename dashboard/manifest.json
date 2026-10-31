@@ -1,5 +1,0 @@
-{
-  "name": "secret-drop",
-  "description": "Store a secret on the gateway host without showing it to the model",
-  "api": "plugin_api.py"
-}

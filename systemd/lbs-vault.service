@@ -1,0 +1,59 @@
+# Template rendered by scripts/install.sh (@...@ placeholders). Do not install by hand.
+[Unit]
+Description=LBS vault owner-entry HTTP service (127.0.0.1:@PORT@; tailnet via tailscale serve /lbs-vault) + root-only agent socket
+After=network-online.target lbs-vault-broker.service
+Wants=lbs-vault-broker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment=LBS_VAULT_DIR=@DIR@
+Environment=LBS_VAULT_PORT=@PORT@
+Environment=LBS_VAULT_OWNER=@OWNER@
+Environment=LBS_VAULT_SOCKET=/run/lbs-vault/agent.sock
+Environment=LBS_VAULT_BROKER_SOCKET=/run/lbs-vault-broker/broker.sock
+Environment=LBS_VAULT_TEMPLATES=@DIR@/templates.json
+Environment=PYTHONPATH=@PREFIX@/lib
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONNOUSERSITE=1
+WorkingDirectory=@PREFIX@/lib
+ExecStart=/usr/bin/python3 -s -B -m lbs_vault.service
+UMask=0077
+RuntimeDirectory=lbs-vault
+RuntimeDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+# No core dumps: process memory can hold decrypted vault contents.
+LimitCORE=0
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@DIR@
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+MemoryMax=512M
+TasksMax=64
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

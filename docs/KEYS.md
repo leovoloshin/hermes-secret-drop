@@ -1,0 +1,19 @@
+# Keys and recovery
+
+The store reuses `cryptography.fernet.Fernet`, the same vetted construction used by Hermes `agent/vault_store.py` inspected on Spark. No new encryption primitive. Whole store (values, usernames, requests) is authenticated ciphertext `vault.enc`. Independent random key `keys/vault.key`, directory 0700, files 0600, euid-owned, no symlinks/hardlinks. Atomic rename + file/directory fsync; process flock prevents concurrent lost updates. Missing key with existing ciphertext fails closed; never auto-replace it.
+
+Root is trusted. Root Hermes, root plugins and administrators can read root process memory/files; process separation prevents accidental tool/result disclosure, not malicious root code. In the inspected gateway configuration `terminal.backend=local`: an ordinary root terminal tool can read the key/ciphertext, decrypt them, alter templates, or inspect another root process. **This is not a sandbox against a model using that root terminal.** Before onboarding real secrets, the supervisor must explicitly accept that trust model or separately confine terminal/code tools under a non-root identity without access to the vault, broker sockets, config or process memory. This task does not change gateway config or restart it. Agent plugin code never imports Store or receives resolve results.
+
+## Backup
+
+Stop **vault service and broker only**, never Hermes gateway. Copy `vault.enc` and `devices.json` into an encrypted offline backup; copy `keys/vault.key` into a separate encrypted offline escrow. Keep matching key/data generations and permissions, record checksums outside chat. Audit contains metadata only but is still private; include if retention policy requires. Never commit or upload any of these files. Test restore in an isolated root-owned directory with fake fixtures first; production restore checks must not print resolved secrets.
+
+Restore matching key/ciphertext while both vault units are stopped; files 0600 root and directories 0700. Re-provision devices if devices.json was not restored. Root unit restart loads registry. Gateway restart is unrelated.
+
+## Rotation
+
+Use a root maintenance session with the two vault units stopped, offline backups completed, and `umask 077`. A trusted offline maintenance program reads old key and decrypts ciphertext in memory, generates `Fernet.generate_key()`, writes new ciphertext and new key with the same atomic writer, validates decrypt/readback in memory (never prints data), then resumes units. **There is no online key-rotation endpoint or automatic rotation command in this release.** Do not replace only the key: that destroys access. Two-file rotation is not transactional; preserve old key/ciphertext pair until validation and both replacements complete. An interruption requires restoring the matching escrow pair before startup. Never put the old/new key or decrypted document in shell arguments, environment, logs, a chat, or a plaintext temporary file.
+
+Device bearer rotation is separate: remove its digest record from root `devices.json`, restart only HTTP unit, provision a new device with offline provision command, transfer privately, replace platform Keychain entry. 90-day default token lifetime; expiry checked per request. Do not reuse canvas bearer. Gateway bot token is never a vault bearer.
+
+Website passwords remain in existing Hermes origin-bound browser vault; no plaintext migration, cross-vault export, or parallel browser fill is implemented. Spark source uses supervisor-only secret-bearing CDP writes and exact origin binding; duplicating that safely would require browser/backend integration beyond this service. Use existing browser_vault tools for websites.
