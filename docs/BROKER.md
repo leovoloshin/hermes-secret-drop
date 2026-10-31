@@ -92,7 +92,7 @@ The value is never placed in argv, environment, a file, or an askpass helper.
 Programs that read a password from stdin work directly:
 `sudo -S -p ''`, `ssh host sudo -S -p '' cmd`, `cryptsetup --key-file=-`,
 `openssl ... -passin stdin`, or a test target that reads one line from stdin.
-Because the value is stored with no control characters, a single line is
+Because the value excludes C0 controls (including CR/LF/NUL), a single line is
 always the whole value. If a command needs the secret somewhere other than
 stdin, wrap it in a root-owned, root-reviewed program that reads stdin — do not
 add it to argv or env.
@@ -207,6 +207,6 @@ files but does not edit `plugins.enabled` or restart the gateway.
 
 ## Gateway owner binding
 
-Before activation, provision the verified numeric owner user ID. The plugin reads private `principals.json` and task-local sender ContextVars and denies non-owner/group/unbound **plugin calls**. It does not block a non-owner who can drive root terminal/code/file tools: those bypass sockets/files directly. Current general gateway allowlist contains three numeric entries; supervisor must verify their identities and root-tool access. Real-secret onboarding is gated on restricting/confning non-owner root access or explicitly trusting every root-capable principal. No gateway config change/restart is performed here. Exact provisioning/context contract: `VAULT-API.md`.
+Before activation, provision the verified numeric owner user ID. Private `principals.json` and task-local sender ContextVars deny non-owner/group/unbound **plugin calls** only. Non-owners with root terminal/code/file tools can bypass the plugin via files/sockets. Three numeric general allowlist entries exist; supervisor must verify their identities and root-tool access. Gate real-secret onboarding on restricting/confining non-owner root access or explicitly trusting every root-capable principal. This task does not change/restart the gateway. Exact contract: `VAULT-API.md`.
 
-On use transport timeout, acknowledgement loss or audit failure, command outcome may be unknown. Never retry automatically; Leo must verify target state first. `vault_outcome_unknown` is distinct from a proven pre-execution refusal. Agent transports have 16 bounded concurrent workers so slow use does not queue metadata calls or later use behind a long-running operation; the broker still admits only four uses at once. Root cannot claim exactly-once execution across a crash.
+A **plugin-to-agent** use transport/malformed-reply failure yields `vault_outcome_unknown`. Structured broker failures and post-execution audit failures retain their reported error codes and may also have uncertain outcomes. Never infer “nothing ran” from an error or retry automatically; Leo must verify target state. Bounded 16-worker agent transports avoid serialized use queues; broker separately admits four uses. No exactly-once guarantee across crashes/acknowledgement loss.
