@@ -2,19 +2,28 @@
 
 Probe: `20261031-200f6a5bf966`.
 
-Authorization and operator-reported installation: `work/LBS-INSTALL-DONE.md`.
-Builder-observed unauthenticated status matrix is recorded in `docs/TESTING.md`; the served malformed request was rejected at authentication, and Funnel-marker refusal was observed directly on loopback. A client marker sent through Serve is stripped, not proof of real Funnel behavior.
+Authorization: `work/LBS-INSTALL-DONE.md` and subsequent direct LBS instructions. Observed unauthenticated/authenticated status matrices are in `docs/TESTING.md` (do not interpret client-marker tests as actual Funnel traffic).
 
-## Current checkpoint
+## Completed
 
-- Bounded unauthenticated requests completed; no bodies, headers, canary or bearer values printed.
-- Generated a fresh fake canary into `work/live-probe-20261031-200f6a5bf966/canary.txt` with 0600 under a 0700 directory. The directory is git-ignored. Its contents have not been read into the model transcript or arguments.
-- Exact root setup commands are in `work/ROOT-STEPS.md`. Root block and generated helper syntax were checked without executing the root setup.
-- The planned fixture owner/device is `probe-20261031-200f6a5bf966`; handle/template is `canary.20261031-200f6a5bf966`. It cannot overwrite Leo's namespace. No `--telegram-owner-id`, principal-policy update or real-device provisioning is requested.
-- Root setup has **not** been executed by the builder. Authenticated matrix/save, installed broker use, ciphertext/audit/journal/state.db canary scans, and fixture cleanup/revocation remain unverified.
+- LBS reports the reviewed setup block ran as root successfully: installed library matches repo, registry backed up, vault service active, private 0600 header/metadata handed off, and gateway/plugin/Funnel/principals untouched.
+- Builder read only the non-secret `root-ready.json` metadata into the transcript. Private input/header file permissions/ownership were checked in-process; their values were not printed.
+- Authenticated live curl matrix and fake canary save completed at `2026-10-31T17:45:40Z`. Every expected status passed; save returned exactly the handle-only object. Each response was checked in-process for canary/bearer absence.
+- Curl disabled .curlrc (`-q`), used an empty allowlisted child environment and file-based auth/body input, and deleted private temporary request/response files. No canary/bearer values were placed in argv, environment, URLs or displayed output.
+- Safe machine-readable client evidence exists at ignored `work/live-probe-20261031-200f6a5bf966/client-results.json`. The original fake pattern and test header remain 0600 in a 0700 ignored directory for the next step.
 
-Next: LBS runs the setup block in `work/ROOT-STEPS.md`, then returns the metadata-only result. Builder uses the private header/body files for real served-URL probes. The subsequent root step performs broker use, exact-canary-only scans (never message dumps), and scoped fixture cleanup.
+## Fixture scope
 
-No gateway restart, plugin enable, Hermes configuration edit, Telegram send, Funnel enable, other Serve path change, real secret or thedoorpc action is authorized by this probe. `LBS-VAULT-SPARK-DONE` has not been earned.
+Owner/device: `probe-20261031-200f6a5bf966`.
+Handle/template: `canary.20261031-200f6a5bf966`.
+This is an isolated fake-owner namespace, not Leo's real device or Telegram principal mapping. No real secret or real target is involved.
 
-Focused T1/guidance review of the root handoff completed read-only. Three initial low findings were corrected: no bytecode writes to the frozen installed package, helper/template validation before provisioning with scoped failure cleanup, and pinned directory-fd handoff I/O plus root-owned curl headers with `-q`. Re-review found no blocking code, syntax or data-scope issues. Both root heredocs and the generated helper parse successfully; none of those root actions has run. The installed product code is unchanged, so no new service build/restart or production audit attack was run by the builder.
+## Next root gate
+
+`work/ROOT-STEPS.md` now contains ONLY the next broker/scan/revoke block; do not rerun old setup/rollback. It validates the pinned canary/helper digest, invokes the installed broker, immediately removes this template/device and verifies old bearer HTTP 401, then scans before deleting evidence. Scans filter exact raw canary bytes from fake ciphertext, audit, all exported journal fields since setup and required state.db (optional WAL/SHM), never printing matches or querying SQL. Only after scans pass are fake namespace/helper/private credentials removed.
+
+Broker use, root-only absence scans and cleanup are **not yet verified**. `LBS-VAULT-SPARK-DONE` remains pending the root metadata-only proof. No root action was executed by the builder, and no gateway restart, plugin enable, Hermes config edit, Telegram send, Funnel/other Serve change or thedoorpc action occurred.
+
+## Review
+
+Both handoffs received focused T1/guidance reviews. Setup's initial three low issues were fixed. The next block's review fixes revoke the credential before long scans, export all journal fields, require state.db, label raw-byte search limits, record granular cleanup progress and discard journal stderr. Re-review found no new Critical/High/Medium/Low issues; syntax was checked without execution. Product code is unchanged; the prior full T3 audit and its deployment gates/needs-validation leads are unchanged.

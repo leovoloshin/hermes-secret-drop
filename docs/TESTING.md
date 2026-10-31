@@ -40,4 +40,18 @@ Builder-observed first matrix (bounded `curl --max-time 10`, body suppressed, st
 
 Authentication precedes body parsing. The served client marker is stripped by the proxy; the direct-backend marker is refused. This is not actual Funnel traffic, does not enable Funnel, and does not close the audit's Funnel-marker deployment caveat.
 
-**Status: awaiting LBS root fixture setup, not complete.** Authenticated malformed/oversized requests, canary save/use, and root-only absence scans have not run. Exact setup commands: `work/ROOT-STEPS.md`; progress: `work/VERIFY.md`. The disposable device uses an isolated fake owner, not Leo's real device or Telegram principal mapping. Canary and bearer artifacts stay in an ignored private probe directory; no values are in these notes.
+LBS reports the reviewed root setup completed successfully: installed library matches the repo, registry backed up, service active, private 0600 test header/metadata handed to leo, and gateway/plugin/Funnel/principals untouched. Builder then exercised the authenticated served URL on 2026-10-31 at 17:45:40 UTC:
+
+| Authenticated case | Observed HTTP |
+|---|---:|
+| Malformed JSON | 400 |
+| Body over 16384 bytes | 413 |
+| Wrong Origin | 403 |
+| Invalid handle | 400 |
+| Client-supplied Funnel marker on GET `/requests/x` | 404 (marker suppressed by proxy; authenticated route lookup) |
+| Public request creation | 403 |
+| Isolated fake-owner canary save | 200 |
+
+The save response was exactly the expected handle-only object. Every response was checked in-process for both the canary and bearer; neither appeared. Curl used `-q`, an empty allowlisted environment, private `--header @file` / `--data-binary @file`, and private response files deleted after validation. No value was put in argv, environment, URL or displayed output. Status-only evidence: ignored private `client-results.json`.
+
+**Status: authenticated matrix/save complete; root broker/scans/revocation pending.** Next exact root block: `work/ROOT-STEPS.md`. It invokes only the fake owner's installed broker template, performs exact-pattern absence scans without displaying message/journal contents, and revokes/removes only the disposable fixture. No `LBS-VAULT-SPARK-DONE` claim until that evidence returns. Progress: `work/VERIFY.md`.
