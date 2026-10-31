@@ -67,7 +67,7 @@ The save response was exactly the expected handle-only object. Every response wa
 
 These are exact fixed-pattern byte searches, not SQL row reconstruction or detection of arbitrary encoding/compression. No matching lines, messages, canary or bearer values were printed. Root proof records removal of the test template/device, fake ciphertext, helper/directory, private credentials and leo bearer handoff; vault key retained. LBS reports the vault service active. No gateway/plugin/principal/Serve modification was made by the root block.
 
-Evidence: metadata-only `work/live-probe-20261031-200f6a5bf966/root-proof.json` (0600 leo, intentionally git-ignored), with non-sensitive summary in `work/VERIFY.md`. Do not rerun `work/ROOT-STEPS.md`: this fixture has been revoked and removed. Native iOS/desktop visual and client integration verification continues separately; plugin activation and real-secret onboarding remain Leo-controlled gates.
+Evidence: metadata-only `work/live-probe-20261031-200f6a5bf966/root-proof.json` (0600 leo, intentionally git-ignored), with non-sensitive summary in `work/VERIFY.md`. Do not rerun the historical probe block (`eb005c9:work/ROOT-STEPS.md`): its fixture is revoked and removed. The current ROOT-STEPS is a separate reviewed code-update handoff, not that probe. Native iOS/desktop verification continues separately; plugin activation and real-secret onboarding remain Leo-controlled gates.
 
 ## On-demand `secret|login` cutover — sandbox proof, not installed-service proof
 
@@ -109,4 +109,4 @@ failure tracebacks/captured output for the same reason.
 The installed live service was not updated by this cutover. The earlier live
 matrix/root proof remains valid for its earlier code only. A reviewed root
 update and fresh typed fixtures are prerequisites for native authenticated
-served-URL proof. Do not reuse the revoked fixture or old ROOT-STEPS block.
+served-URL proof. Do not reuse the revoked fixture or historical probe block. The new vault-only update handoff is `work/ROOT-STEPS.md`.
