@@ -319,9 +319,9 @@ def test_store_files_are_private_and_ciphertext(vault):
     assert (status, body) == (200, {"saved": HANDLE})
     assert _mode(vault.base) == 0o700
     assert _mode(vault.base / "keys") == 0o700
-    for name in ("keys/vault.key", "vault.enc", "audit.jsonl", ".lock"):
-        assert _mode(vault.base / name) == 0o600, name
-    blob = (vault.base / "vault.enc").read_bytes()
+    for path in (vault.base/"keys/vault.key", vault.store.path, vault.base/"audit.jsonl", vault.base/".lock"):
+        assert _mode(path) == 0o600
+    blob = vault.store.path.read_bytes()
     assert vault.canary.encode() not in blob
     # It really is Fernet ciphertext under the separate key file.
     key = (vault.base / "keys" / "vault.key").read_bytes()
@@ -354,10 +354,10 @@ def test_missing_key_is_refused_not_regenerated(vault):
     assert not (vault.base / "keys" / "vault.key").exists()
 
 
-@pytest.mark.parametrize("target,mode", [("vault.enc", 0o644), ("keys/vault.key", 0o640), ("audit.jsonl", 0o604)])
+@pytest.mark.parametrize("target,mode", [("document", 0o644), ("keys/vault.key", 0o640), ("audit.jsonl", 0o604)])
 def test_loose_file_permissions_fail_closed(vault, target, mode):
     vault.save()
-    os.chmod(vault.base / target, mode)
+    os.chmod(vault.store.path if target=="document" else vault.base/target, mode)
     with pytest.raises(VaultError) as err:
         s = Store(vault.base)
         s.save(OWNER, "another.handle", PURPOSE, new_canary())
@@ -373,7 +373,7 @@ def test_loose_store_directory_is_refused(vault):
 
 def test_symlinked_store_file_is_refused(vault):
     vault.save()
-    enc = vault.base / "vault.enc"
+    enc = vault.store.path
     moved = vault.root / "elsewhere.enc"
     os.replace(enc, moved)
     enc.symlink_to(moved)
@@ -946,10 +946,10 @@ def test_owner_item_quota_preserves_updates_and_other_owner(vault, monkeypatch):
 
 def test_document_capacity_refusal_is_atomic(vault, monkeypatch):
     vault.save()
-    ciphertext_before = (vault.base / "vault.enc").read_bytes()
+    ciphertext_before = vault.store.path.read_bytes()
     monkeypatch.setattr(store_mod, "MAX_DOCUMENT_BYTES", 1)
     assert vault.save(handle="another.secret") == (413, {"error": "vault_capacity"})
-    assert (vault.base / "vault.enc").read_bytes() == ciphertext_before
+    assert vault.store.path.read_bytes() == ciphertext_before
     assert [s["handle"] for s in vault.store.list(OWNER)] == [HANDLE]
 
 
@@ -1034,3 +1034,105 @@ def test_audit_rotation_is_bounded_private_and_metadata_only(vault, monkeypatch)
     assert json.loads(current.read_text().splitlines()[-1])["handle"]=="rotation.19"
     assert "rotation.00" not in current.read_text()+previous.read_text()
     vault.assert_canary_absent_everywhere()
+
+
+def test_one_owner_cannot_exhaust_another_owners_document(vault, monkeypatch):
+    monkeypatch.setattr(store_mod,"MAX_DOCUMENT_BYTES",1400)
+    foreign_value="\U0001f642"*200
+    assert vault.save(handle="foreign.one",value=foreign_value,token=vault.other_token)[0]==200
+    assert vault.save(handle="foreign.two",value=foreign_value,token=vault.other_token)==(413,{"error":"vault_capacity"})
+    assert vault.save()==(200,{"saved":HANDLE})
+    assert vault.store.resolve(OWNER,HANDLE)==vault.canary
+    assert len(vault.store.list("mallory"))==1
+    req=vault.request()
+    assert vault.store.status(OWNER,req["id"])["status"]=="pending"
+
+
+def test_missing_key_with_only_foreign_owner_data_is_not_regenerated(vault):
+    vault.save(token=vault.other_token)
+    assert not vault.store.path.exists()
+    vault.store.key.unlink()
+    with pytest.raises(VaultError) as err:
+        Store(vault.base)
+    assert err.value.code=="missing_key"
+    assert not vault.store.key.exists()
+
+
+def test_request_budget_is_separate_from_saved_values_and_prunes(vault, monkeypatch):
+    monkeypatch.setattr(store_mod,"MAX_REQUESTS_PER_OWNER",2)
+    vault.request(); vault.request()
+    assert vault.agent_call({"op":"request","handle":HANDLE,"purpose":PURPOSE})=={"error":"rate_limited","status":429}
+    assert vault.save()==(200,{"saved":HANDLE})
+    real=time.time
+    monkeypatch.setattr(store_mod,"time",types.SimpleNamespace(time=lambda:real()+90000))
+    req=vault.request()
+    assert req["status"]=="pending"
+
+
+@pytest.mark.parametrize("field", ["value","purpose","username"])
+def test_unpaired_unicode_surrogates_are_malformed(vault,field):
+    body={"handle":HANDLE,"purpose":PURPOSE,"value":vault.canary,field:"bad\\ud800".encode().decode("unicode_escape")}
+    assert vault.call("POST","/lbs-vault/secrets",body)==(400,{"error":"malformed"})
+
+
+def test_sticky_shared_directory_is_not_an_approved_cwd(vault):
+    templates=vault.default_templates()
+    templates[0]['cwd']=tempfile.gettempdir()
+    vault.write_templates(templates)
+    assert vault.tool(plugin.vault_use,{'template_id':templates[0]['id'],'handle':HANDLE})=={'error':'template_target_insecure','status':503}
+
+
+@pytest.mark.parametrize("name", ["tclsh8.6","ksh93","bsd-csh"])
+def test_interpreter_aliases_are_refused_after_resolution(vault,name):
+    interpreter=vault.bin/name
+    interpreter.write_text("#!/bin/sh\nexit 0\n"); interpreter.chmod(0o700)
+    alias=vault.bin/'alias-command'; alias.symlink_to(interpreter)
+    vault.write_templates([{'id':'alias.command','handle':HANDLE,'argv':[str(alias)]}])
+    assert vault.tool(plugin.vault_use,{'template_id':'alias.command','handle':HANDLE})=={'error':'template_config_invalid','status':503}
+
+
+def test_user_writable_shebang_interpreter_is_refused(vault):
+    interpreter=vault.bin/'unsafe-interpreter'
+    interpreter.write_text("#!/bin/sh\nexit 0\n"); interpreter.chmod(0o777)
+    helper=vault.bin/'unsafe-helper'
+    helper.write_text(f"#!{interpreter}\nignored\n"); helper.chmod(0o700)
+    vault.write_templates([{'id':'unsafe.helper','handle':HANDLE,'argv':[str(helper)]}])
+    assert vault.tool(plugin.vault_use,{'template_id':'unsafe.helper','handle':HANDLE})=={'error':'template_target_insecure','status':503}
+
+
+def test_agent_metadata_is_not_queued_behind_secret_use(vault):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextvars import copy_context
+    marker=vault.root/'started'
+    helper=vault.bin/'blocking-helper'
+    helper.write_text(f"#!/bin/sh\nIFS= read -r pw\n: > '{marker}'\nsleep 2\nprintf done\n")
+    helper.chmod(0o700)
+    vault.write_templates([{'id':'blocking.helper','handle':HANDLE,'argv':[str(helper)],'timeout_s':5}])
+    vault.save()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        running=executor.submit(copy_context().run,vault.tool,plugin.vault_use,{'template_id':'blocking.helper','handle':HANDLE})
+        deadline=time.monotonic()+3
+        while not marker.exists() and time.monotonic()<deadline:
+            threading.Event().wait(0.01)
+        assert marker.exists()
+        started=time.monotonic()
+        metadata=vault.tool(plugin.vault_list)
+        assert time.monotonic()-started<1
+        assert [s['handle'] for s in metadata['secrets']]==[HANDLE]
+        assert running.result(timeout=5)['exit_code']==0
+
+
+def test_use_transport_loss_reports_unknown_not_safe_to_retry(vault,monkeypatch):
+    path=vault.run/'lost-reply.sock'
+    listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+    listener.bind(str(path)); listener.listen(1)
+    def lose_reply():
+        connection,_=listener.accept()
+        with connection:
+            connection.recv(16384)
+    worker=threading.Thread(target=lose_reply,daemon=True); worker.start()
+    try:
+        monkeypatch.setenv('LBS_VAULT_SOCKET',str(path))
+        assert json.loads(plugin.vault_use({'template_id':'fake.sudo-check','handle':HANDLE}))=={'error':'vault_outcome_unknown'}
+    finally:
+        listener.close(); worker.join(2)

@@ -78,6 +78,7 @@ class Template:
     id: str
     handle: str
     argv: tuple[str, ...]
+    executable: str
     description: str = ""
     timeout_s: int = DEFAULT_TIMEOUT_S
     max_output_bytes: int = DEFAULT_MAX_OUTPUT
@@ -119,11 +120,12 @@ def _parse_template(raw) -> Template:
     program = argv[0]
     if not os.path.isabs(program) or os.path.normpath(program) != program:
         raise _invalid("argv[0] must be a normalized absolute path")
+    written_name = os.path.basename(program)
     program = _trusted_path(program)
-    argv = [program, *argv[1:]]
-    name = os.path.basename(program)
-    if name in REFUSED_PROGRAMS or name.startswith(("python", "perl", "ruby", "php", "lua")):
-        raise _invalid("interpreter or shell launcher refused")
+    for name in (written_name,os.path.basename(program)):
+        if name in REFUSED_PROGRAMS or re.fullmatch(r'(python|perl|ruby|php|lua|tclsh|ksh|csh|bsd-csh|bash|dash|zsh|tcsh|mksh|node)[0-9.]*',name):
+            raise _invalid("interpreter or shell launcher refused")
+    _check_shebang(program)
     description = raw.get("description", "")
     if not isinstance(description, str) or len(description) > 200 or any(ord(c) < 32 for c in description):
         raise _invalid("bad description")
@@ -148,7 +150,7 @@ def _parse_template(raw) -> Template:
     stdin_newline = raw.get("stdin_newline", True)
     if type(stdin_newline) is not bool:
         raise _invalid("bad stdin_newline")
-    return Template(id=tid, handle=handle, argv=tuple(argv), description=description,
+    return Template(id=tid, handle=handle, argv=tuple(argv), executable=program, description=description,
                     timeout_s=timeout_s, max_output_bytes=max_output, cwd=cwd,
                     env=dict(env), stdin_newline=stdin_newline)
 
@@ -176,9 +178,30 @@ def _trusted_path(path, *, directory=False):
         st = resolved.stat()
         if not (stat.S_ISDIR(st.st_mode) if directory else stat.S_ISREG(st.st_mode)):
             raise VaultError(503, 'template_target_insecure')
+        if directory and st.st_mode & 0o022:
+            raise VaultError(503, 'template_target_insecure')
         return str(resolved)
     except (OSError, RuntimeError):
         raise VaultError(503, 'template_target_insecure') from None
+
+def _check_shebang(program):
+    """A reviewed helper must not delegate its secret to a user-owned interpreter."""
+    try:
+        with open(program,'rb') as f:
+            first=f.readline(512)
+        if not first.startswith(b'#!'):
+            return
+        parts=first[2:].strip().split()
+        if not parts or not parts[0].startswith(b'/'):
+            raise VaultError(503,'template_target_insecure')
+        interpreter=_trusted_path(os.fsdecode(parts[0]))
+        if Path(interpreter).name=='env':
+            raise VaultError(503,'template_target_insecure')
+        with open(interpreter,'rb') as f:
+            if f.read(4)!=b'\x7fELF':
+                raise VaultError(503,'template_target_insecure')
+    except (OSError,UnicodeError):
+        raise VaultError(503,'template_target_insecure') from None
 
 
 def load_templates(path=None) -> dict[str, Template]:
@@ -307,7 +330,7 @@ def run_template(tpl: Template, secret: str) -> dict:
     started = time.monotonic()
     try:
         proc = subprocess.Popen(
-            list(tpl.argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            list(tpl.argv), executable=tpl.executable, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             env=_child_env(tpl, home, user), cwd=cwd, close_fds=True, start_new_session=True,
             umask=0o077,
         )

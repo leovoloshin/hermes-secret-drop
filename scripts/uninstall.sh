@@ -85,7 +85,7 @@ PYEOF
 )
 	case "$state" in
 		absent) say "ok: no tailscale serve $SERVE_PATH" ;;
-		foreign) say "WARNING: $SERVE_PATH is served by something other than $TARGET; left untouched" ;;
+		foreign) die "$SERVE_PATH belongs to another backend; review/remove it explicitly before stopping vault units" ;;
 		ours*)
 			backup_dir
 			change "tailscale serve: remove https://$HOST$SERVE_PATH (backup: $BACKUP_DIR/serve-before.json)"
@@ -126,15 +126,19 @@ remove_tree() {
 	run rm -rf --one-file-system -- "$dest"
 }
 remove_tree "$PLUGIN_DIR" "$PLUGIN_DIR/$MARKER" "staged Hermes plugin"
-remove_tree "$PREFIX" "$PREFIX/lib/$MARKER" "package code"
+remove_tree "$PREFIX/lib" "$PREFIX/lib/$MARKER" "package code"
+if [[ -d $PREFIX && -z $(find "$PREFIX" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
+	change "remove empty package prefix: $PREFIX"
+	run rmdir -- "$PREFIX"
+fi
 
 # ---- 4. data (encrypted store + key) --------------------------------------------
 if [[ -d $DIR ]]; then
 	if [[ $PURGE == 1 ]]; then
-		change "DESTROY data dir $DIR (encrypted store, key, audit log, device digests)"
+		change "DESTROY data dir $DIR (all owner ciphertext, key, audit logs, device and owner-principal registries)"
 		run rm -rf --one-file-system -- "$DIR"
 	else
-		say "kept: $DIR (encrypted store + key; rerun with --purge-data to destroy)"
+		say "kept: $DIR (all owner ciphertext, key, audit logs and device/principal registries; --purge-data destroys them)"
 	fi
 else
 	say "ok: data dir absent ($DIR)"

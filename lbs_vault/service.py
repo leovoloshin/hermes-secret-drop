@@ -199,7 +199,19 @@ class AgentHandler(socketserver.StreamRequestHandler):
         except Exception: result={'error':'internal_error','status':500}
         self.wfile.write(json.dumps(result).encode()+b'\n')
 
-class AgentServer(socketserver.UnixStreamServer):
+class AgentServer(socketserver.ThreadingMixIn,socketserver.UnixStreamServer):
+    daemon_threads=True
+    request_queue_size=16
+    def __init__(self,*args,**kwargs):
+        self.slots=threading.BoundedSemaphore(16)
+        super().__init__(*args,**kwargs)
+    def process_request(self,request,address):
+        if not self.slots.acquire(blocking=False): request.close(); return
+        try: super().process_request(request,address)
+        except BaseException: self.slots.release(); raise
+    def process_request_thread(self,request,address):
+        try: super().process_request_thread(request,address)
+        finally: self.slots.release()
     def handle_error(self,*a): pass
 
 class LocalRequestHandler(Handler):

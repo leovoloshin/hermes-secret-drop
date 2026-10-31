@@ -92,16 +92,16 @@ def _agent_call(payload: dict, *, timeout: float = META_TIMEOUT_S, socket_path: 
                 break
             data += chunk
             if len(data) > MAX_REPLY_BYTES:
-                return {"error": "reply_too_large"}
+                return {"error": "vault_outcome_unknown" if payload.get("op")=="use" else "reply_too_large"}
     except OSError:
-        return {"error": "vault_unavailable"}
+        return {"error": "vault_outcome_unknown" if payload.get("op")=="use" else "vault_unavailable"}
     finally:
         sock.close()
     try:
         reply = json.loads(bytes(data).split(b"\n", 1)[0])
     except (ValueError, UnicodeDecodeError):
-        return {"error": "bad_reply"}
-    return reply if isinstance(reply, dict) else {"error": "bad_reply"}
+        return {"error": "vault_outcome_unknown" if payload.get("op")=="use" else "bad_reply"}
+    return reply if isinstance(reply, dict) else {"error": "vault_outcome_unknown" if payload.get("op")=="use" else "bad_reply"}
 
 
 def _text(args: dict, key: str, maximum: int) -> str | None:
@@ -219,7 +219,8 @@ _PROMPT = (
     "an approved template_id and its bound handle; the secret is supplied on protected stdin by a root broker and "
     "never returned by these tools. Root terminal/code tools can still read root files and are trusted, not "
     "sandboxed by this plugin. Use only in Leo's owner-only gateway context, never shared/group contexts. "
-    "Do not try to print, decode, or exfiltrate secret values."
+    "Never automatically retry vault_use after a timeout, transport or audit error: it may already have run; "
+    "ask Leo to verify the target state before another use. Do not print, decode, or exfiltrate secret values."
 )
 
 

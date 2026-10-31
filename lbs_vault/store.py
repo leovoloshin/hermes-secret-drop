@@ -2,6 +2,7 @@
 from __future__ import annotations
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from cryptography.fernet import Fernet
 HANDLE = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}\Z")
 ID = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 MAX_ITEMS_PER_OWNER = 128
+MAX_REQUESTS_PER_OWNER = 128
 MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_AUDIT_BYTES = 4 * 1024 * 1024
@@ -26,7 +28,7 @@ class VaultError(Exception):
         super().__init__(code)
 
 def text(value, maximum, empty=False):
-    if not isinstance(value, str) or (not value and not empty) or len(value) > maximum or any(ord(c)<32 for c in value):
+    if not isinstance(value, str) or (not value and not empty) or len(value) > maximum or any(ord(c)<32 or 0xD800<=ord(c)<=0xDFFF for c in value):
         raise VaultError(400, "malformed")
     return value
 
@@ -74,14 +76,20 @@ class Store:
         self.base = private_dir(base)
         self.keys = private_dir(self.base / 'keys')
         self.key = self.keys / 'vault.key'
-        self.path = self.base / 'vault.enc'
+        self.owner = text(os.environ.get('LBS_VAULT_OWNER','leo'),64)
+        self.path = self.path_for(self.owner)
         self.lock = threading.RLock()
         with self.transaction() as data:
             pass
 
+    def path_for(self, owner):
+        text(owner,64)
+        return self.base / ('owner-'+hashlib.sha256(owner.encode()).hexdigest()+'.enc')
+
     @contextlib.contextmanager
-    def transaction(self):
+    def transaction(self, owner=None):
         with self.lock:
+            path=self.path_for(self.owner if owner is None else owner)
             fd = os.open(self.base / '.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
             try:
                 s = os.fstat(fd)
@@ -89,18 +97,19 @@ class Store:
                     raise VaultError(500,'unsafe_permissions')
                 fcntl.flock(fd, fcntl.LOCK_EX)
                 if not self.key.exists():
-                    if self.path.exists(): raise VaultError(500, 'missing_key')
+                    if any(self.base.glob('owner-*.enc')): raise VaultError(500, 'missing_key')
                     atomic(self.key, Fernet.generate_key())
                 self.crypto = Fernet(read_private(self.key))
-                data = json.loads(self.crypto.decrypt(read_private(self.path))) if self.path.exists() else {'items':{}, 'requests':{}}
+                data = json.loads(self.crypto.decrypt(read_private(path))) if path.exists() else {'items':{}, 'requests':{}}
+                data['requests']={k:v for k,v in data['requests'].items() if v['expires_at']>time.time()-86400}
                 yield data
             finally:
                 os.close(fd)
 
-    def persist(self, data):
-        payload = json.dumps(data, separators=(',', ':')).encode()
+    def persist(self, data, owner):
+        payload = json.dumps(data, separators=(',', ':'), ensure_ascii=False).encode()
         if len(payload) > MAX_DOCUMENT_BYTES: raise VaultError(413, "vault_capacity")
-        atomic(self.path, self.crypto.encrypt(payload))
+        atomic(self.path_for(owner), self.crypto.encrypt(payload))
 
     def audit(self, owner, handle, op, status):
         # All arguments here are validated metadata, never caller exception text.
@@ -136,15 +145,12 @@ class Store:
     def request(self, owner, handle, purpose, ttl=600):
         text(owner,64); handle_valid(handle); text(purpose,256)
         if type(ttl) is not int or not 1<=ttl<=600: raise VaultError(400,'invalid_ttl')
-        with self.transaction() as d:
-            # Bound retained expired requests and pending requests per owner.
-            now = time.time()
-            d['requests'] = {k:v for k,v in d['requests'].items() if v['expires_at'] > now-86400}
-            if sum(v['owner']==owner for v in d['requests'].values())>=1000: raise VaultError(429,'rate_limited')
+        with self.transaction(owner) as d:
+            if len(d['requests'])>=MAX_REQUESTS_PER_OWNER: raise VaultError(429,'rate_limited')
             rid = secrets.token_urlsafe(32)
-            r = dict(owner=owner,handle=handle,purpose=purpose,expires_at=now+ttl,status='pending')
+            r = dict(owner=owner,handle=handle,purpose=purpose,expires_at=time.time()+ttl,status='pending')
             d['requests'][rid] = r
-            self.persist(d)
+            self.persist(d,owner)
             self.audit(owner,handle,'request','pending')
             return dict(id=rid,link='tglens://vault?req='+rid,**{k:v for k,v in r.items() if k!='owner'})
 
@@ -159,21 +165,21 @@ class Store:
         if r['status']!='pending': raise VaultError(409,'consumed')
 
     def status(self,owner,rid):
-        with self.transaction() as d:
+        with self.transaction(owner) as d:
             r=self._request(d,owner,rid)
             return dict(handle=r['handle'],purpose=r['purpose'],status='expired' if r['status']=='pending' and r['expires_at']<=time.time() else r['status'])
 
     def cancel(self,owner,rid):
-        with self.transaction() as d:
+        with self.transaction(owner) as d:
             r=self._request(d,owner,rid); self._pending(r)
-            r['status']='cancelled'; self.persist(d); self.audit(owner,r['handle'],'cancel','cancelled')
+            r['status']='cancelled'; self.persist(d,owner); self.audit(owner,r['handle'],'cancel','cancelled')
             return {'status':'cancelled'}
 
     def save(self,owner,handle,purpose,value,username=None,request_id=None):
         text(owner,64); handle_valid(handle); text(purpose,256); text(value,8192)
         if len(value.encode())>8192: raise VaultError(400,'invalid_value')
         if username is not None: text(username,256,empty=True)
-        with self.transaction() as d:
+        with self.transaction(owner) as d:
             if request_id is not None:
                 r=self._request(d,owner,request_id); self._pending(r)
                 if (r['handle'],r['purpose'])!=(handle,purpose): raise VaultError(400,'request_mismatch')
@@ -182,16 +188,16 @@ class Store:
             if key not in d['items'] and sum(item['owner']==owner for item in d['items'].values()) >= MAX_ITEMS_PER_OWNER:
                 raise VaultError(429, 'owner_quota')
             d['items'][key]=dict(owner=owner,handle=handle,purpose=purpose,username=username,updated_at=time.time(),value=value)
-            self.persist(d); self.audit(owner,handle,'save','saved')
+            self.persist(d,owner); self.audit(owner,handle,'save','saved')
             return {'saved':handle}
 
     def list(self,owner):
-        with self.transaction() as d:
+        with self.transaction(owner) as d:
             return [{k:v for k,v in item.items() if k not in ('value','owner')} for item in d['items'].values() if item['owner']==owner]
 
     def resolve(self,owner,handle):
         handle_valid(handle)
-        with self.transaction() as d:
+        with self.transaction(owner) as d:
             item=d['items'].get(owner+':'+handle)
             if item is None: raise VaultError(404,'not_found')
             return item['value']

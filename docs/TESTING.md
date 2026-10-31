@@ -17,7 +17,7 @@ docker run --rm --network none --read-only --user 1000:1000 \
   python -m pytest -q -p no:cacheprovider --basetemp=/scratch/pytest
 ```
 
-Apply an outer wall-clock timeout (90 seconds for the suite invocation). `exec` on the scratch tmpfs is required for executable fake target scripts; no secrets or home directories are mounted. The read-only passwd file provides UID metadata for broker drop-user setup, not shadow credentials. Scratch writes have a 64 MiB disk bound. No host sockets, Docker socket, production endpoints or external networking enter the container.
+Apply an outer wall-clock timeout (90 seconds for the suite invocation). `exec` on scratch is required for executable fake targets; no secrets or home directories are mounted. Read-only passwd supplies the broker's fixed-uid/home metadata, not shadow credentials. Scratch writes are disk-bounded to 64 MiB. No host sockets, Docker socket, production endpoints or external networking enter the container.
 
 The tests exercise fake owner/device principals and fake stdin targets. They must never contact thedoorpc, send Telegram messages, read chat history, restart the gateway, or read real credentials. Unit/daemon proof is not native Rubric visual proof or real Tailscale routing proof.
 
