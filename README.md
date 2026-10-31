@@ -1,12 +1,12 @@
 # LBS password vault
 
-Encrypted Spark vault service, root broker, and staged handle-only Hermes plugin. Native masked entry is owned by Rubric, using [the exact API contract](docs/VAULT-API.md). Values travel directly from native field over tailnet HTTPS, never through Telegram or agent arguments.
+Encrypted Spark vault service, root broker, and staged handle-only Hermes plugin. Native entry is on-demand from one allowlisted LBS **Give it here** request action: mandatory `secret` (one masked field) or `login` (username/email and masked password), following [the exact API contract](docs/VAULT-API.md). Proactive save entrypoints and unrequested saves are removed. Values travel directly from native fields over tailnet HTTPS, never through Telegram or agent arguments.
 
 ## Components
 
 - `lbs_vault/store.py`: whole-document Fernet encryption, owner binding, single-use expiring requests, private atomic storage and metadata audit.
 - `lbs_vault/service.py`: loopback-only HTTP entry with per-device bearer auth, bounded bodies, Host/Origin checks, rate limiting; root-only Unix agent socket.
-- `lbs_vault/broker.py`: separate root process, fixed approved target templates, secret on protected stdin, timeout/output bounds and exact redaction.
+- `lbs_vault/broker.py`: separate root process, kind/handle-bound approved target templates, credential fields on protected stdin only, timeout/output bounds and exact password redaction.
 - `plugin/`: install under `/root/.hermes/plugins/lbs-vault/`; tools list/request/status/use only, bound to one verified Telegram owner's direct chat using private policy and task-local gateway identity. No get tool or generic env injection.
 - `scripts/install.sh`, `scripts/uninstall.sh`, `systemd/`: root operator deployment, preserving unrelated Tailscale paths; no gateway restart.
 
@@ -29,3 +29,7 @@ The root agent trust boundary is explicit: same-privilege malicious code can rea
 ## Changes
 
 2026-10-31: replaced plaintext Secret Drop with encrypted owner-scoped LBS vault; documented device provisioning, client HTTP API, broker templates, key backup and operational gates. Security evidence and deployment status: `docs/SECURITY-REVIEW.md`.
+
+2026-10-31 on-demand cutover: mandatory `secret|login` request/save kinds, request-only saves, atomic encrypted login pairs, kind-bound broker stdin templates, and required plugin kind enum. Existing untyped requests/credentials require re-entry; no implicit kind defaults.
+
+The cutover also fixes a pre-existing partial-password redaction gap at timeout/drain/output-limit boundaries. Final sandbox proof: 192 tests, plus a separate 29-check real-daemon kind-cutover smoke; details and live-versus-sandbox provenance are in `docs/TESTING.md`.

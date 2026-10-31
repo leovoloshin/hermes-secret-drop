@@ -1,6 +1,6 @@
 # LBS vault security review
 
-## Reviewed source and result
+## Prior full audit — before the on-demand kind cutover
 
 - **Tier 3:** full, standard-profile source/local audit of Spark service, encrypted store, broker, staged plugin, installer, units and docs. Frozen code: `816904d95f7a3189386b49b8f39cffbec9f2cebc` (base `505bd3b`). No earlier audit ledger existed.
 - **Tier 1:** independent `security-reviewer` passes over the initial diff and subsequent code deltas, including `8c95f9f..816904d`. Final delta: no high or medium defects; low/informational hardening notes remain in the external report.
@@ -8,7 +8,7 @@
 - Coverage: **43 units: 37 covered, 2 candidate linked to needs_validation, 4 out of scope**. Native Rubric clients/visual verification, Hermes core, host deployment state, and tests as shipped code are outside this Spark audit scope. Tests were inspected/exercised as evidence.
 - Parent ran both validators after closure: `PASS: 22 findings valid`; `PASS: 43 coverage units valid`.
 
-Full artifacts: `/home/leo/security-audit-skill/lbs-secret-vault/run-1/` (`REPORT.md`, `FINDINGS-DETAIL.md`, `NEEDS-VALIDATION.md`, `findings.json`, `coverage-ledger.json`, `run-metadata.json`). Evidence was independently rechecked on the frozen snapshot. Final delivery additionally corrects documentation wording; no backend/plugin code changed after `816904d`.
+Full artifacts: `/home/leo/security-audit-skill/lbs-secret-vault/run-1/` (`REPORT.md`, `FINDINGS-DETAIL.md`, `NEEDS-VALIDATION.md`, `findings.json`, `coverage-ledger.json`, `run-metadata.json`). Evidence was independently rechecked on frozen `816904d`. That audit does not cover the subsequent mandatory-kind/request-only code; its focused delta review and exercised proof are recorded separately below.
 
 ## Fixes independently verified
 
@@ -64,3 +64,13 @@ All target execution used generated fake canaries in the Docker sandbox document
 ## Audit process disclosure
 
 The external report records coordinator handoff, fresh replacements for unusable verifier results, and a missed separate wave-7 critic compensated by a complete wave-8 re-hunt and combined critic plus a distinct final-clean critic. Two early write-isolation incidents were restored/removed; final frozen snapshot hashes matched, and no final source/evidence change was attributed to them. These deviations are disclosed, not presented as a flawless process or exhaustive security proof. Parent corrected an outdated stale-route disposition to final uninstall abort behavior without assuming historical deployment state; verdict unchanged.
+
+## On-demand kind cutover delta
+
+- **Tier 1:** independent `security-reviewer` passes read the changed store/service and broker/plugin files, manifest and regression tests. A different reviewer checked the final cutoff fix after the parent independently reproduced the original defect in Docker. Final source recheck passed with no open delta findings.
+- **Tier 2 guidance:** scoped to request-kind/field validation, owner/request binding, encrypted atomic login pairs, metadata boundaries, strict root stdin templates, fixed argv/environment, plugin schema/requester authorization and legacy fail-closed handling. The boring-killers grep found only the existing bearer/authority checks, not hardcoded secrets, debug mode, shell execution, SQL construction or redirect additions. No new public route or auth system is introduced.
+- The review discovered a pre-existing incomplete-output privacy defect: a fake approved target could return part of its password at timeout/drain boundaries. Parent validation printed only boolean evidence; both below/across-limit timeout cases reproduced before the fix and stopped returning the prefix afterward. Final hardening redacts even one-byte trailing prefixes at abnormal cuts; eight real-target regressions cover short/long prefixes, timeout/drain and both output boundaries.
+- **Final suite: 192 passed in 28.79s.** A separate kind-cutover cold-start service/broker smoke passed 29 checks in 3.55s before the final short-prefix delta; the final suite exercises that delta through actual plugin/service/broker/target paths. All execution stayed inside the documented offline Docker sandbox. Throwaway scripts/state were removed; no values or raw failure tracebacks were displayed.
+- This is focused T1/T2 coverage, **not a new full Tier 3 audit** of the final tree. Historical comparisons used pre-edit bytecode and the installed broker copy where reviewers could not decompress git objects; those baseline identities were not independently byte-for-byte established. Final current source was read directly and rechecked after fixes.
+- The prior full-audit needs-validation records remain: sustained local slot cycling and a conditional exact/prefix-redaction oracle when an approved helper exposes attacker-controlled output. More conservative one-byte redaction at abnormal cuts does not remove that inherent oracle tradeoff. Approved helper dependencies/output provenance and local principal trust still require operator review. No installed template inventory was inspected here.
+- Native on-demand clients require their own new frozen-source delta audits and runtime/visual proof. Root deployment of this cutover, typed fake-device fixtures, real-secret onboarding and plugin activation remain separate gates. The builder changed no installed service, gateway, principal or Serve state.

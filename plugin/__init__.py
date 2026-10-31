@@ -1,12 +1,17 @@
 """LBS vault Hermes plugin: handle-only secret tools over the vault's local agent socket.
 
-The plugin never sees a secret value. It sends metadata requests (list, request,
-status, use) to the root vault service's Unix socket; ``use`` names an approved,
-root-configured command template plus the handle it is bound to, and the root
-broker runs it with the value on protected stdin. Results carry exit status and
-redacted output only. There is deliberately no get/read/export tool and no
-environment injection. This module has no package-relative imports so it can be
-installed as a flat plugin directory.
+The plugin never sees a secret value and never accepts a value or username as a tool
+argument; a login username is metadata and may appear in vault_list and vault_use results. It
+sends metadata requests (list, request, status, use) to the root vault service's
+Unix socket. Secrets are asked
+for, never offered: ``request`` declares the handle, purpose and kind (``secret`` =
+one field, ``login`` = username/email + password) and LBS sends Leo one message with
+a single "Give it here" action. ``use`` names an approved, root-configured command
+template plus the handle it is bound to, and the root broker runs it with the stored
+fields on protected stdin. Results carry exit status and output with the secret redacted.
+There is deliberately no get/read/export tool and no environment injection. This
+module has no package-relative imports so it can be installed as a flat plugin
+directory.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ TOOLSET = "lbs_vault"
 HANDLE = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}\Z")
 TEMPLATE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}\Z")
 REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{43}\Z")
+KINDS = ("secret", "login")
 MAX_PURPOSE = 256
 MAX_REPLY_BYTES = 4 * 1024 * 1024
 META_TIMEOUT_S = 15.0
@@ -124,7 +130,10 @@ def vault_request(args: dict, **_kwargs) -> str:
     purpose = _text(args, "purpose", MAX_PURPOSE)
     if purpose is None:
         return _error("invalid_purpose")
-    payload = {"op": "request", "handle": handle, "purpose": purpose}
+    kind = args.get("kind")
+    if not isinstance(kind, str) or kind not in KINDS:
+        return _error("invalid_kind", hint="kind must be secret or login")
+    payload = {"op": "request", "handle": handle, "purpose": purpose, "kind": kind}
     ttl = args.get("ttl_s")
     if ttl is not None:
         if type(ttl) is not int or not 60 <= ttl <= 600:
@@ -133,8 +142,12 @@ def vault_request(args: dict, **_kwargs) -> str:
     reply = _agent_call(payload)
     if "error" not in reply and isinstance(reply.get("link"), str):
         reply["next_step"] = (
-            "Send Leo this exact link so Rubric opens its masked secret field: " + reply["link"]
-            + " . Do not ask him to type the secret in chat. Check progress with vault_status."
+            "Send Leo exactly one message: one plain sentence saying what it is for (e.g. 'LBS needs the sudo "
+            "password for thedoorpc.'), then on its own line 'Give it here: " + reply["link"] + "' so Rubric "
+            "shows a single 'Give it here' button that opens the masked "
+            + ("username + password form" if kind == "login" else "field")
+            + ". Do not ask him to type the secret in chat. After he saves, the button reads 'Saved' and "
+            "vault_status reports saved; nothing returns the value."
         )
     return json.dumps(reply)
 
@@ -166,31 +179,37 @@ _HANDLE_PROP = {
 _TOOLS = {
     "vault_list": (
         vault_list,
-        "List the LBS vault's stored secret handles (metadata only: handle, purpose, username, updated_at) "
-        "and the root-approved command templates (id, bound handle, description) usable with vault_use. "
-        "Never returns secret values.",
+        "List the LBS vault's stored secret handles (metadata only: handle, purpose, kind, username for login "
+        "kind, updated_at) and the root-approved command templates (id, bound handle, kind, description) usable "
+        "with vault_use. Never returns secret values.",
         {},
         [],
         "\U0001f5c4",
     ),
     "vault_request": (
         vault_request,
-        "Ask Leo for a secret without it touching chat: creates a short-lived, single-use request for a handle "
-        "and returns a tglens://vault?req=<id> link. Send that link to Leo; Rubric opens a masked native field "
-        "and posts the value straight to the vault. Never ask Leo to paste a secret into chat or tool arguments.",
+        "Ask Leo for a secret only when the current task needs one that is not stored: creates a short-lived, "
+        "single-use request declaring handle, purpose and kind, and returns a tglens://vault?req=<id> link. Send "
+        "Leo one message with a plain sentence of what it is for and the single 'Give it here' action for that "
+        "link; Rubric shows only the requested fields and posts them straight to the vault. kind 'secret' is one "
+        "masked field (password, token or code); kind 'login' is username/email plus masked password. You never "
+        "supply the value or username. Never ask Leo to paste a secret into chat or tool arguments.",
         {
             "handle": _HANDLE_PROP,
             "purpose": {"type": "string", "maxLength": MAX_PURPOSE,
                         "description": "Why the secret is needed, shown to Leo, e.g. 'sudo on thedoorpc for reboot'."},
+            "kind": {"type": "string", "enum": list(KINDS),
+                     "description": "'secret' = one field (password/token/code); "
+                                    "'login' = username or email plus password."},
             "ttl_s": {"type": "integer", "minimum": 60, "maximum": 600,
                       "description": "Request lifetime in seconds (default 600)."},
         },
-        ["handle", "purpose"],
+        ["handle", "purpose", "kind"],
         "\U0001f510",
     ),
     "vault_status": (
         vault_status,
-        "Check a vault request created by vault_request: returns handle, purpose and status "
+        "Check a vault request created by vault_request: returns kind, handle, purpose and status "
         "(pending, saved, cancelled, expired). Never returns the value.",
         {"id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$", "description": "Request id from vault_request."}},
         ["id"],
@@ -198,10 +217,11 @@ _TOOLS = {
     ),
     "vault_use": (
         vault_use,
-        "Use a stored secret through a root-approved command template: the root broker runs the template's fixed "
-        "command with the secret on protected stdin and returns exit_code, timed_out, truncated and output with the "
-        "secret redacted. You choose only template_id and the handle it is bound to (see vault_list); arbitrary "
-        "commands, arguments and environment are not accepted.",
+        "Use a stored secret through a root-approved command template: the root broker checks the template's kind "
+        "matches the stored kind, runs the template's fixed command with the stored fields on protected stdin and "
+        "returns exit_code, timed_out, truncated and output with the secret redacted. You choose only template_id "
+        "and the handle it is bound to (see vault_list); arbitrary commands, arguments and environment are not "
+        "accepted.",
         {
             "template_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$",
                             "description": "Approved template id from vault_list."},
@@ -213,14 +233,19 @@ _TOOLS = {
 }
 
 _PROMPT = (
-    "LBS vault: when a task needs a password or token, never ask Leo to paste it into chat, a file, or a tool "
-    "argument. Call vault_list to see stored handles; if the handle is missing, call vault_request and send Leo "
-    "the returned tglens://vault?req=... link (Rubric shows a masked field). To use a secret, call vault_use with "
-    "an approved template_id and its bound handle; the secret is supplied on protected stdin by a root broker and "
-    "never returned by these tools. Root terminal/code tools can still read root files and are trusted, not "
-    "sandboxed by this plugin. Use only in Leo's owner-only gateway context, never shared/group contexts. "
-    "Never automatically retry vault_use after a timeout, transport or audit error: it may already have run; "
-    "ask Leo to verify the target state before another use. Do not print, decode, or exfiltrate secret values."
+    "LBS vault: secrets are asked for, never offered. When the current task needs a password, token, code or "
+    "login, never ask Leo to paste it into chat, a file, or a tool argument, and never invite him to hand over "
+    "secrets in advance. Call vault_list to see stored handles; only if the needed handle is missing, call "
+    "vault_request with kind 'secret' (one field) or 'login' (username/email + password) and send Leo one "
+    "message: a plain sentence saying what it is for plus the single 'Give it here' action for the returned "
+    "tglens://vault?req=... link. After he saves, the action reads 'Saved' and vault_status reports status "
+    "'saved' for that handle. To use a secret, call vault_use with an approved template_id and its bound handle; the stored "
+    "fields are supplied on protected stdin by a root broker and the secret is never returned by these tools "
+    "(a login username is metadata and may appear). Root terminal/code tools can still read root files and are "
+    "trusted, not sandboxed by this plugin. Use only in Leo's owner-only gateway context, never shared/group "
+    "contexts. Never automatically retry vault_use after a timeout, transport or audit error: it may already "
+    "have run; ask Leo to verify the target state before another use. Do not print, decode, or exfiltrate "
+    "secret values."
 )
 
 

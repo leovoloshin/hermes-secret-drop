@@ -21,6 +21,8 @@ MAX_REQUESTS_PER_OWNER = 128
 MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_AUDIT_BYTES = 4 * 1024 * 1024
+KINDS = frozenset(("secret", "login"))
+UNSET = object()
 
 class VaultError(Exception):
     def __init__(self, status, code):
@@ -35,6 +37,11 @@ def text(value, maximum, empty=False):
 def handle_valid(value):
     if not isinstance(value, str) or not HANDLE.fullmatch(value):
         raise VaultError(400, "invalid_handle")
+    return value
+
+def kind_valid(value):
+    if not isinstance(value, str) or value not in KINDS:
+        raise VaultError(400, "invalid_kind")
     return value
 
 def private_dir(path):
@@ -142,62 +149,115 @@ class Store:
                 if fd>=0: os.close(fd)
         finally: os.close(lock_fd)
 
-    def request(self, owner, handle, purpose, ttl=600):
-        text(owner,64); handle_valid(handle); text(purpose,256)
-        if type(ttl) is not int or not 1<=ttl<=600: raise VaultError(400,'invalid_ttl')
+    def request(self, owner, handle, purpose, kind, ttl=600):
+        text(owner, 64); handle_valid(handle); text(purpose, 256); kind_valid(kind)
+        if type(ttl) is not int or not 1 <= ttl <= 600:
+            raise VaultError(400, "invalid_ttl")
         with self.transaction(owner) as d:
-            if len(d['requests'])>=MAX_REQUESTS_PER_OWNER: raise VaultError(429,'rate_limited')
+            if len(d["requests"]) >= MAX_REQUESTS_PER_OWNER:
+                raise VaultError(429, "rate_limited")
             rid = secrets.token_urlsafe(32)
-            r = dict(owner=owner,handle=handle,purpose=purpose,expires_at=time.time()+ttl,status='pending')
-            d['requests'][rid] = r
-            self.persist(d,owner)
-            self.audit(owner,handle,'request','pending')
-            return dict(id=rid,link='tglens://vault?req='+rid,**{k:v for k,v in r.items() if k!='owner'})
+            r = dict(owner=owner, handle=handle, purpose=purpose, kind=kind,
+                     expires_at=time.time()+ttl, status="pending")
+            d["requests"][rid] = r
+            self.persist(d, owner)
+            self.audit(owner, handle, "request", "pending")
+            return dict(id=rid, link="tglens://vault?req="+rid,
+                        **{k: v for k, v in r.items() if k != "owner"})
 
-    def _request(self,d,owner,rid):
-        if not isinstance(rid,str) or not ID.fullmatch(rid): raise VaultError(404,'not_found')
-        r=d['requests'].get(rid)
-        if not r or r['owner']!=owner: raise VaultError(404,'not_found')
+    def _request(self, d, owner, rid):
+        if not isinstance(rid, str) or not ID.fullmatch(rid):
+            raise VaultError(404, "not_found")
+        r = d["requests"].get(rid)
+        if not r or r.get("owner") != owner:
+            raise VaultError(404, "not_found")
+        if r.get("kind") not in KINDS:
+            raise VaultError(409, "request_reissue_required")
         return r
 
-    def _pending(self,r):
-        if r['expires_at']<=time.time(): raise VaultError(410,'expired')
-        if r['status']!='pending': raise VaultError(409,'consumed')
+    @staticmethod
+    def _pending(r):
+        if r["expires_at"] <= time.time():
+            raise VaultError(410, "expired")
+        if r["status"] != "pending":
+            raise VaultError(409, "consumed")
 
-    def status(self,owner,rid):
+    def status(self, owner, rid):
         with self.transaction(owner) as d:
-            r=self._request(d,owner,rid)
-            return dict(handle=r['handle'],purpose=r['purpose'],status='expired' if r['status']=='pending' and r['expires_at']<=time.time() else r['status'])
+            r = self._request(d, owner, rid)
+            status = "expired" if r["expires_at"] <= time.time() and r["status"] == "pending" else r["status"]
+            return {k: r[k] for k in ("handle", "purpose", "kind")} | {"status": status}
 
-    def cancel(self,owner,rid):
+    def cancel(self, owner, rid):
         with self.transaction(owner) as d:
-            r=self._request(d,owner,rid); self._pending(r)
-            r['status']='cancelled'; self.persist(d,owner); self.audit(owner,r['handle'],'cancel','cancelled')
-            return {'status':'cancelled'}
+            r = self._request(d, owner, rid)
+            self._pending(r)
+            r["status"] = "cancelled"
+            self.persist(d, owner)
+            self.audit(owner, r["handle"], "cancel", "cancelled")
+            return {"status": "cancelled"}
 
-    def save(self,owner,handle,purpose,value,username=None,request_id=None):
-        text(owner,64); handle_valid(handle); text(purpose,256); text(value,8192)
-        if len(value.encode())>8192: raise VaultError(400,'invalid_value')
-        if username is not None: text(username,256,empty=True)
+    def save(self, owner, handle, purpose, kind, value, request_id=None, username=UNSET):
+        kind_valid(kind)
+        if kind == "secret":
+            if username is not UNSET:
+                raise VaultError(400, "invalid_fields")
+        else:
+            if username is UNSET:
+                raise VaultError(400, "invalid_fields")
+            try:
+                text(username, 256)
+            except VaultError:
+                raise VaultError(400, "invalid_username") from None
+            if not username.strip():
+                raise VaultError(400, "invalid_username")
+        text(owner, 64); handle_valid(handle); text(purpose, 256); text(value, 8192)
+        if len(value.encode("utf-8")) > 8192:
+            raise VaultError(400, "invalid_value")
+        if request_id is None:
+            raise VaultError(403, "request_required")
         with self.transaction(owner) as d:
-            if request_id is not None:
-                r=self._request(d,owner,request_id); self._pending(r)
-                if (r['handle'],r['purpose'])!=(handle,purpose): raise VaultError(400,'request_mismatch')
-                r['status']='saved'
-            key=owner+':'+handle
-            if key not in d['items'] and sum(item['owner']==owner for item in d['items'].values()) >= MAX_ITEMS_PER_OWNER:
-                raise VaultError(429, 'owner_quota')
-            d['items'][key]=dict(owner=owner,handle=handle,purpose=purpose,username=username,updated_at=time.time(),value=value)
-            self.persist(d,owner); self.audit(owner,handle,'save','saved')
-            return {'saved':handle}
+            r = self._request(d, owner, request_id)
+            self._pending(r)
+            if r["kind"] != kind:
+                raise VaultError(400, "request_kind_mismatch")
+            if r["handle"] != handle or r["purpose"] != purpose:
+                raise VaultError(400, "request_mismatch")
+            key = owner+":"+handle
+            if key not in d["items"] and len(d["items"]) >= MAX_ITEMS_PER_OWNER:
+                raise VaultError(429, "owner_quota")
+            item = dict(owner=owner, handle=handle, purpose=purpose, kind=kind,
+                        updated_at=time.time(), value=value)
+            if kind == "login":
+                item["username"] = username
+            d["items"][key] = item
+            r["status"] = "saved"
+            self.persist(d, owner)
+            self.audit(owner, handle, "save", "saved")
+            return {"saved": handle}
 
-    def list(self,owner):
+    def list(self, owner):
         with self.transaction(owner) as d:
-            return [{k:v for k,v in item.items() if k not in ('value','owner')} for item in d['items'].values() if item['owner']==owner]
+            result = []
+            for item in d["items"].values():
+                metadata = {k: item[k] for k in ("handle", "purpose", "updated_at")}
+                metadata["kind"] = item.get("kind") if item.get("kind") in KINDS else None
+                if metadata["kind"] == "login":
+                    metadata["username"] = item["username"]
+                elif metadata["kind"] is None:
+                    metadata["requires_request"] = True
+                result.append(metadata)
+            return result
 
-    def resolve(self,owner,handle):
-        handle_valid(handle)
+    def resolve_for_use(self, owner, handle):
+        """Return one atomic credential snapshot only to the private broker."""
         with self.transaction(owner) as d:
-            item=d['items'].get(owner+':'+handle)
-            if item is None: raise VaultError(404,'not_found')
-            return item['value']
+            item = d["items"].get(owner+":"+handle)
+            if item is None:
+                raise VaultError(404, "not_found")
+            if item.get("kind") not in KINDS:
+                raise VaultError(409, "item_reissue_required")
+            result = {"kind": item["kind"], "value": item["value"]}
+            if item["kind"] == "login":
+                result["username"] = item["username"]
+            return result

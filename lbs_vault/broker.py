@@ -4,9 +4,11 @@ The broker is a separate root process (``python3 -m lbs_vault.broker``) that
 listens on a root-only Unix socket. The vault service forwards an agent's
 ``use`` request to it as ``{op: "use", owner, template_id, handle}``. The broker
 looks the template up in a root-owned config, checks the template is bound to
-exactly that handle, decrypts the value itself, and runs the template's fixed
-argv with the value written to the child's stdin pipe. It never accepts argv,
-environment, or shell text from a caller, never places the value in argv or
+exactly that handle, takes a decrypted snapshot of the stored credential itself,
+checks the stored kind (``secret`` or ``login``) matches the template's kind, and
+runs the template's fixed argv with the root-configured ``stdin_template``
+rendered onto the child's stdin pipe. It never accepts argv, environment, or
+shell text from a caller, never places the value or username in argv or
 environment, and returns only exit status plus bounded, redacted output.
 """
 from __future__ import annotations
@@ -37,6 +39,12 @@ TEMPLATE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}\Z")
 HANDLE = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}\Z")
 OWNER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}\Z")
 ENV_KEY = re.compile(r"[A-Z_][A-Z0-9_]{0,63}\Z")
+KINDS = ("secret", "login")
+STDIN_FIELDS = ("secret", "username")
+DEFAULT_STDIN_TEMPLATE = (("field", "secret"),)
+MAX_STDIN_TEMPLATE = 256
+MAX_VALUE_BYTES = 8192
+MAX_USERNAME = 256
 
 # A template is one fixed program; launchers that turn data into a new program are refused.
 REFUSED_PROGRAMS = {
@@ -77,6 +85,7 @@ def templates_path_default() -> Path:
 class Template:
     id: str
     handle: str
+    kind: str
     argv: tuple[str, ...]
     executable: str
     description: str = ""
@@ -84,10 +93,12 @@ class Template:
     max_output_bytes: int = DEFAULT_MAX_OUTPUT
     cwd: str | None = None
     env: dict[str, str] = field(default_factory=dict)
+    # Pre-parsed root-configured stdin layout: ("text", literal) or ("field", "secret"|"username").
+    stdin_template: tuple[tuple[str, str], ...] = DEFAULT_STDIN_TEMPLATE
     stdin_newline: bool = True
 
     def metadata(self) -> dict:
-        return {"id": self.id, "handle": self.handle, "description": self.description,
+        return {"id": self.id, "handle": self.handle, "kind": self.kind, "description": self.description,
                 "timeout_s": self.timeout_s}
 
 
@@ -102,18 +113,62 @@ def _plain(value, maximum: int) -> bool:
     return isinstance(value, str) and 0 < len(value) <= maximum and "\x00" not in value
 
 
+def _parse_stdin_template(text, kind: str) -> tuple[tuple[str, str], ...]:
+    """Strictly parse ``{secret}``/``{username}`` placeholders; ``{{``/``}}`` are literal braces.
+
+    No format specs, conversions, attribute/index access or positional fields: anything
+    between braces other than exactly ``secret`` or ``username`` is refused.
+    """
+    if not isinstance(text, str) or not 0 < len(text) <= MAX_STDIN_TEMPLATE:
+        raise _invalid("bad stdin_template")
+    parts: list[tuple[str, str]] = []
+    literal: list[str] = []
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch in "{}":
+            if text.startswith(ch * 2, i):
+                literal.append(ch)
+                i += 2
+                continue
+            end = text.find("}", i) if ch == "{" else -1
+            if end == -1 or text[i + 1:end] not in STDIN_FIELDS:
+                raise _invalid("stdin_template placeholders are only {secret} and {username}")
+            if literal:
+                parts.append(("text", "".join(literal)))
+                literal = []
+            parts.append(("field", text[i + 1:end]))
+            i = end + 1
+            continue
+        code = ord(ch)
+        if (code < 32 and ch not in "\n\t") or code == 0x7F or 0xD800 <= code <= 0xDFFF:
+            raise _invalid("bad stdin_template character")
+        literal.append(ch)
+        i += 1
+    if literal:
+        parts.append(("text", "".join(literal)))
+    fields = [name for part, name in parts if part == "field"]
+    if fields.count("secret") != 1 or fields.count("username") > 1:
+        raise _invalid("stdin_template needs exactly one {secret} and at most one {username}")
+    if kind != "login" and "username" in fields:
+        raise _invalid("{username} needs a login-kind template")
+    return tuple(parts)
+
+
 def _parse_template(raw) -> Template:
     if not isinstance(raw, dict):
         raise _invalid("template is not an object")
-    allowed = {"id", "handle", "argv", "description", "timeout_s", "max_output_bytes",
-               "cwd", "env", "stdin_newline"}
+    allowed = {"id", "handle", "kind", "argv", "description", "timeout_s", "max_output_bytes",
+               "cwd", "env", "stdin_template", "stdin_newline"}
     if set(raw) - allowed:
         raise _invalid("unknown template field")
-    tid, handle, argv = raw.get("id"), raw.get("handle"), raw.get("argv")
+    tid, handle, kind, argv = raw.get("id"), raw.get("handle"), raw.get("kind"), raw.get("argv")
     if not isinstance(tid, str) or not TEMPLATE_ID.fullmatch(tid):
         raise _invalid("bad template id")
     if not isinstance(handle, str) or not HANDLE.fullmatch(handle):
         raise _invalid("bad template handle")
+    if not isinstance(kind, str) or kind not in KINDS:
+        raise _invalid("bad template kind")
     if (not isinstance(argv, list) or not 1 <= len(argv) <= 64
             or any(not isinstance(a, str) or len(a) > 4096 or "\x00" in a for a in argv)):
         raise _invalid("bad argv")
@@ -147,12 +202,13 @@ def _parse_template(raw) -> Template:
                 or key.startswith(REFUSED_ENV_PREFIXES) or not isinstance(value, str)
                 or len(value) > 4096 or "\x00" in value):
             raise _invalid("bad env entry")
+    stdin_template = _parse_stdin_template(raw.get("stdin_template", "{secret}"), kind)
     stdin_newline = raw.get("stdin_newline", True)
     if type(stdin_newline) is not bool:
         raise _invalid("bad stdin_newline")
-    return Template(id=tid, handle=handle, argv=tuple(argv), executable=program, description=description,
-                    timeout_s=timeout_s, max_output_bytes=max_output, cwd=cwd,
-                    env=dict(env), stdin_newline=stdin_newline)
+    return Template(id=tid, handle=handle, kind=kind, argv=tuple(argv), executable=program,
+                    description=description, timeout_s=timeout_s, max_output_bytes=max_output, cwd=cwd,
+                    env=dict(env), stdin_template=stdin_template, stdin_newline=stdin_newline)
 
 
 def _check_owned(st: os.stat_result) -> None:
@@ -243,20 +299,18 @@ def load_templates(path=None) -> dict[str, Template]:
 
 
 def list_templates(path=None) -> list[dict]:
-    """Template metadata only (id, handle, description, timeout_s); never argv or env."""
+    """Template metadata only (id, handle, kind, description, timeout_s); never argv, env or stdin layout."""
     return [tpl.metadata() for tpl in sorted(load_templates(path).values(), key=lambda t: t.id)]
 
 
-def redact(buf: bytes, secret: bytes, limit: int, *, complete: bool = True) -> tuple[bytes, bool]:
-    """Return at most ``limit`` source bytes of ``buf`` with every byte belonging to an
-    occurrence of ``secret`` collapsed into ``[REDACTED]``.
+def redact(buf: bytes, secret: bytes, limit: int, *, min_trailing_prefix: int = MIN_TRAILING_PREFIX) -> tuple[bytes, bool]:
+    """Redact full occurrences and trailing prefixes at every captured-buffer cut.
 
-    ``buf`` must hold at least ``limit + len(secret) - 1`` bytes when more output
-    existed, so any occurrence starting inside the limit (including one split across
-    read chunks or the truncation point) is complete and found. Overlapping
-    occurrences are covered. When ``complete`` (the stream ended inside ``buf``), a
-    trailing proper prefix of the secret of at least ``MIN_TRAILING_PREFIX`` bytes is
-    also redacted. The second return value reports truncation.
+    Keep ``limit + len(secret) - 1`` bytes when available so full occurrences
+    crossing the output limit are found. A deadline or drain cutoff can stop
+    earlier: redact a trailing proper prefix of at least ``min_trailing_prefix``
+    bytes, including when it crosses the output limit.
+    The second return value reports source-byte truncation.
     """
     if not secret:
         raise ValueError("empty secret")
@@ -266,11 +320,10 @@ def redact(buf: bytes, secret: bytes, limit: int, *, complete: bool = True) -> t
     while start != -1 and start < limit:
         covered[start:start + len(secret)] = b"\x01" * len(secret)
         start = buf.find(secret, start + 1)
-    if complete and not truncated:
-        for size in range(min(len(secret) - 1, len(buf)), MIN_TRAILING_PREFIX - 1, -1):
-            if buf.endswith(secret[:size]):
-                covered[len(buf) - size:] = b"\x01" * size
-                break
+    for size in range(min(len(secret) - 1, len(buf)), min_trailing_prefix - 1, -1):
+        if buf.endswith(secret[:size]):
+            covered[len(buf) - size:] = b"\x01" * size
+            break
     out = bytearray()
     i = 0
     while i < len(buf) and i < limit:
@@ -313,20 +366,54 @@ def _kill_group(pid: int, sig: int) -> None:
         pass
 
 
-def run_template(tpl: Template, secret: str) -> dict:
-    """Run ``tpl`` with ``secret`` on stdin only and return the redacted result."""
-    if not isinstance(secret, str) or not secret:
+def _field_bytes(text, *, is_username: bool) -> bytearray:
+    """Re-check one stored field against the store's rules and encode it; violations are a fixed error."""
+    if (not isinstance(text, str) or not text or any(ord(c) < 32 for c in text)
+            or (is_username and (len(text) > MAX_USERNAME or not text.strip()))):
         raise VaultError(500, "broker_error")
-    secret_bytes = bytearray(secret.encode())
-    payload = bytearray(secret_bytes)
+    try:
+        data = bytearray(text.encode())
+    except UnicodeEncodeError:  # unpaired surrogates
+        raise VaultError(500, "broker_error") from None
+    if not is_username and len(data) > MAX_VALUE_BYTES:
+        data[:] = b"\x00" * len(data)
+        raise VaultError(500, "broker_error")
+    return data
+
+
+def _render_stdin(tpl: Template, secret_bytes: bytearray, username_bytes: bytearray) -> bytearray:
+    """Build the bounded stdin payload from the pre-parsed template; no str.format is involved."""
+    payload = bytearray()
+    for part, text in tpl.stdin_template:
+        if part == "text":
+            payload += text.encode()
+        elif text == "secret":
+            payload += secret_bytes
+        else:
+            payload += username_bytes
     if tpl.stdin_newline:
         payload += b"\n"
+    return payload
+
+
+def run_template(tpl: Template, secret: str, *, username: str | None = None) -> dict:
+    """Run ``tpl`` with its rendered ``stdin_template`` on stdin only and return the redacted result.
+
+    A ``secret`` template takes no username; a ``login`` template requires one. Only the
+    secret value is redacted from output: the username is metadata, not a secret.
+    """
+    if tpl.kind not in KINDS or (tpl.kind == "secret" and username is not None):
+        raise VaultError(500, "broker_error")
     home, user = _child_identity()
     cwd = _trusted_path(tpl.cwd or (home if os.path.isdir(home) else "/"), directory=True)
+    username_bytes = _field_bytes(username, is_username=True) if tpl.kind == "login" else bytearray()
+    secret_bytes = _field_bytes(secret, is_username=False)
+    payload = _render_stdin(tpl, secret_bytes, username_bytes)
     cap = tpl.max_output_bytes + len(secret_bytes) - 1
     buf = bytearray()
     overflow = False
     timed_out = False
+    output_cut = False
     started = time.monotonic()
     try:
         proc = subprocess.Popen(
@@ -352,6 +439,7 @@ def run_template(tpl: Template, secret: str) -> dict:
             now = time.monotonic()
             if now >= deadline:
                 timed_out = True
+                output_cut = True
                 break
             exited = _exited_unreaped(proc.pid)
             if exited and exit_seen_at is None:
@@ -362,6 +450,7 @@ def run_template(tpl: Template, secret: str) -> dict:
                 time.sleep(0.05)  # pipes closed but the leader still runs: wait for it until the deadline
                 continue
             if exit_seen_at is not None and now - exit_seen_at >= EXIT_DRAIN_S:
+                output_cut = True
                 break  # leader is gone; leftover group members holding the pipe are killed below
             for key, _ in sel.select(min(deadline - now, 0.25)):
                 if key.fd == in_fd:
@@ -403,13 +492,13 @@ def run_template(tpl: Template, secret: str) -> dict:
             except OSError:
                 pass
         payload[:] = b"\x00" * len(payload)
-    complete = not overflow and not timed_out
     if overflow:
         # Guarantee the truncation flag even when the cap landed exactly on the limit.
         buf_for_redact = bytes(buf) + b"\x00"
     else:
         buf_for_redact = bytes(buf)
-    clean, truncated = redact(buf_for_redact, bytes(secret_bytes), tpl.max_output_bytes, complete=complete)
+    clean, truncated = redact(buf_for_redact, bytes(secret_bytes), tpl.max_output_bytes,
+                              min_trailing_prefix=1 if output_cut else MIN_TRAILING_PREFIX)
     output = clean.decode("utf-8", errors="replace")
     result = {
         "template_id": tpl.id,
@@ -430,7 +519,7 @@ def run_template(tpl: Template, secret: str) -> dict:
 
 
 def execute_use(store, owner: str, template_id: str, handle: str, templates_path=None) -> dict:
-    """Validate the request against the approved template, resolve the value, run, audit."""
+    """Validate the request against the approved template, snapshot the credential, check kind, run, audit."""
     if not isinstance(owner, str) or not OWNER.fullmatch(owner):
         raise VaultError(400, "bad_request")
     if not isinstance(template_id, str) or not TEMPLATE_ID.fullmatch(template_id):
@@ -446,17 +535,23 @@ def execute_use(store, owner: str, template_id: str, handle: str, templates_path
         store.audit(owner, handle, "use", "handle_mismatch")
         raise VaultError(403, "handle_mismatch")
     try:
-        value = store.resolve(owner, handle)
+        snapshot = store.resolve_for_use(owner, handle)
     except VaultError as exc:
         store.audit(owner, handle, "use", exc.code)
         raise
     try:
-        result = run_template(tpl, value)
+        kind = snapshot.get("kind") if isinstance(snapshot, dict) else None
+        if kind not in KINDS or set(snapshot) != ({"kind", "value", "username"} if kind == "login"
+                                                  else {"kind", "value"}):
+            raise VaultError(500, "broker_error")
+        if kind != tpl.kind:
+            raise VaultError(403, "kind_mismatch")
+        result = run_template(tpl, snapshot["value"], username=snapshot.get("username"))
     except VaultError as exc:
         store.audit(owner, handle, "use", exc.code)
         raise
     finally:
-        del value
+        del snapshot
     status = "timeout" if result["timed_out"] else f"exit:{result['exit_code']}"
     store.audit(owner, handle, "use", status)
     return result

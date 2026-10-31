@@ -1,10 +1,11 @@
 name: lbs-vault
 version: "1.0.0"
 description: >
-  LBS password vault tools. List stored handles, ask Leo for a secret through
-  Rubric's masked native field, check a request, and run a root-approved command
-  template that receives the secret on protected stdin. Vault tool results do
-  not export plaintext. Root terminal access is not isolated; owner-only gateway required.
+  LBS password vault tools. List stored handles, request an on-demand secret
+  or login through Rubric's native fields, check a request, and run a
+  kind-bound root-approved template with credential fields on protected stdin.
+  Credential fields are not returned; target output is bounded and exact-match redacted.
+  Root terminal access is not isolated; owner-only gateway required.
 author: LBS
 license: MIT
 tags: [security, secrets, vault]

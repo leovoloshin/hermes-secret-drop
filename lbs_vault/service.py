@@ -13,7 +13,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.client import LineTooLong
 from pathlib import Path
-from .store import Store, VaultError, read_private, private_dir
+from .store import Store, VaultError, read_private, private_dir, kind_valid
 
 HOST = 'spark-dd6e.tail4b7569.ts.net'
 MAX_BODY = 16384
@@ -153,7 +153,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.command=='POST' and path=='/requests': raise VaultError(403,'agent_only')
         if self.command=='POST' and path=='/secrets':
             b=self.body()
-            if set(b)-{'request_id','handle','purpose','username','value'} or not {'handle','purpose','value'}<=set(b): raise VaultError(400,'malformed')
+            if set(b)-{'request_id','kind','handle','purpose','username','value'} or not {'handle','purpose','value'}<=set(b): raise VaultError(400,'malformed')
+            kind_valid(b.get('kind'))
             return self.server.store.save(owner,**b)
         pieces=path.strip('/').split('/')
         if len(pieces)>=2 and pieces[0]=='requests':
@@ -191,7 +192,7 @@ class AgentHandler(socketserver.StreamRequestHandler):
             op=b.get('op'); owner=self.server.owner; store=self.server.store
             from .broker import list_templates, request_use
             if op=='list' and set(b)=={'op'}: result={'secrets':store.list(owner),'templates':list_templates()}
-            elif op=='request' and set(b)<= {'op','handle','purpose','ttl_s'}: result=store.request(owner,b['handle'],b['purpose'],b.get('ttl_s',600))
+            elif op=='request' and set(b)<= {'op','handle','purpose','kind','ttl_s'} and {'handle','purpose'}<=set(b): result=store.request(owner,b['handle'],b['purpose'],b.get('kind'),b.get('ttl_s',600))
             elif op=='status' and set(b)=={'op','id'}: result=store.status(owner,b['id'])
             elif op=='use' and set(b)=={'op','template_id','handle'}: result=request_use(owner,b['template_id'],b['handle'])
             else: raise VaultError(400,'malformed')
@@ -222,9 +223,9 @@ class LocalRequestHandler(Handler):
         if self.command!='POST' or self.path!='/lbs-vault/requests':
             raise VaultError(404,'not_found')
         b=self.body()
-        if set(b)-{'handle','purpose','ttl_s'} or not {'handle','purpose'}<=set(b):
+        if set(b)-{'handle','purpose','kind','ttl_s'} or not {'handle','purpose'}<=set(b):
             raise VaultError(400,'malformed')
-        return self.server.store.request(self.server.owner,b['handle'],b['purpose'],b.get('ttl_s',600))
+        return self.server.store.request(self.server.owner,b['handle'],b['purpose'],b.get('kind'),b.get('ttl_s',600))
 
 def local_request_server(path,store,owner='leo'):
     path=Path(path)

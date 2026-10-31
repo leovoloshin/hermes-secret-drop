@@ -23,10 +23,35 @@ Original generated fake `canary.txt` remains private for exact-pattern verificat
 
 Owner/device `probe-20261031-200f6a5bf966`, handle/template `canary.20261031-200f6a5bf966` are revoked/removed. **Do not rerun ROOT-STEPS or reuse the fixture.**
 
-Spark verification is complete. Last full pytest result: **105 passed in 9.26s**; final code audited at `816904d`, T3/T1 reports and deployment gates in `docs/SECURITY-REVIEW.md`. New work only records operator/observed evidence; product code unchanged.
+The original installed Spark verification is complete. At that closure, pytest was **105 passed in 9.26s** and product code was audited at `816904d`; that milestone changed documentation only. The later on-demand addendum supersedes the request/save contract, so this live proof is not a claim that the new `secret|login` code has been installed or live-tested.
 
 Plugin enable, gateway restart, principal changes, real-secret onboarding and Serve changes remain Leo's call and were not performed. Native iOS `w24:p2` and desktop `w1Z:p2` acceptance/visual verification continue separately; this is not the global native-product done signal.
 
 ## Review
 
 Both root handoffs received focused T1/guidance review. Reported low issues were corrected; rereview found no new Critical/High/Medium/Low issues. Root syntax was checked without executing root actions by the builder. Prior full T3 needs-validation leads (local slot cycling and conditional redaction oracle), host trust gates and native UI scope remain explicitly unchanged.
+
+## Native continuation checkpoint
+
+User directed continuation with iOS owner `w24:p2` and desktop owner `w1Z:p2`. Parent inspected the existing four iOS 100026 and five desktop 132 vault PNGs: layouts are readable and values visually masked; saved/cancel confirmations show metadata. Provenance matters: iOS images are UIKit controller fixtures with mock transport, and desktop images are Qt fixtures against a local contract server—not authenticated native saves to the live Spark service or proof of macOS publication.
+
+Parent's computer facade has no display/capture/input backend on this host; real device/macOS capture must use the owners' established remote native verification path. No direct live desktop screenshot was fabricated.
+
+Integrated source checks identified iOS display-name-to-bot-ID trust minting, Keychain cache/readback failure bypass and missing strict handoff guards, plus macOS Keychain-to-plaintext-file fallback. Owners were instructed to fix these, add behavior-level regressions, preserve real credentials/data, and freeze final code for independent review. Memory-clearing UI copy must describe field clearing, not certify all process memory.
+
+Scoped full T3 native run-4 audits completed on the earlier freezes, source-only: iOS `10089629` / studio1 `47b4057` has no confirmed findings and one unresolved UIKit composer-refocus lead; desktop `a5eda9e017` has no confirmed findings, two unresolved macOS focus/Keychain-identity leads, and one rejected late-reply vulnerability claim (still a robustness issue). Parent validated both findings/coverage files: iOS 3 records/24 units, desktop 3 records/19 units. Owners subsequently changed focus/signing/QA gates and began the on-demand UI; these older audits are not final approval of the new code. New frozen hashes require delta revalidation. Existing publication jobs must remain immutable/unduplicated, with source/build provenance preserved. Native production/Keychain/live-auth and final visual acceptance are not yet complete; no global `LBS-VAULT-DONE` signal.
+
+## On-demand addendum
+
+`work/ADDENDUM-ONDEMAND.md` replaces proactive entry with one allowlisted request action and mandatory `secret|login`. The API contract is `docs/VAULT-API.md`; both native owners received the exact body/error/status contract. New code is not deployed by the builder: root vault update/test provisioning remains a reviewed LBS step. Plugin activation, gateway restart, principal and Serve changes remain forbidden here.
+
+Spark on-demand code proof: **192 passed in 28.79s** in the offline Docker sandbox.
+The separate service/broker cold-start smoke of the kind cutover, before final
+short-prefix hardening, passed all **29 checks in 3.55s**,
+with temporary state removed. Both kinds save/use correctly; request-only and
+kind/field bindings hold; fake credentials remain out of results, argv/environment
+and plaintext files/logs. A separately reproduced pre-existing timeout/cutoff
+password-prefix leak is fixed and covered by eight actual-target regressions,
+including sub-four-byte prefixes at abnormal cuts in the final full-suite run.
+The before/after probe printed booleans only; no canary/bearer values or raw
+tracebacks were shown. Throwaway scripts were removed. Details: `docs/TESTING.md`.

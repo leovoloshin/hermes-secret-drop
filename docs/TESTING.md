@@ -14,7 +14,8 @@ docker run --rm --network none --read-only --user 1000:1000 \
   --workdir /src --entrypoint /usr/bin/env python:3.12-slim \
   -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/scratch TMPDIR=/scratch \
   PYTHONPATH=/src:/deps PYTHONDONTWRITEBYTECODE=1 \
-  python -m pytest -q -p no:cacheprovider --basetemp=/scratch/pytest
+  python -m pytest -q -p no:cacheprovider --basetemp=/scratch/pytest \
+    --tb=no --show-capture=no -rN
 ```
 
 Apply an outer wall-clock timeout (90 seconds for the suite invocation). `exec` on scratch is required for executable fake targets; no secrets or home directories are mounted. Read-only passwd supplies the broker's fixed-uid/home metadata, not shadow credentials. Scratch writes are disk-bounded to 64 MiB. No host sockets, Docker socket, production endpoints or external networking enter the container.
@@ -67,3 +68,45 @@ The save response was exactly the expected handle-only object. Every response wa
 These are exact fixed-pattern byte searches, not SQL row reconstruction or detection of arbitrary encoding/compression. No matching lines, messages, canary or bearer values were printed. Root proof records removal of the test template/device, fake ciphertext, helper/directory, private credentials and leo bearer handoff; vault key retained. LBS reports the vault service active. No gateway/plugin/principal/Serve modification was made by the root block.
 
 Evidence: metadata-only `work/live-probe-20261031-200f6a5bf966/root-proof.json` (0600 leo, intentionally git-ignored), with non-sensitive summary in `work/VERIFY.md`. Do not rerun `work/ROOT-STEPS.md`: this fixture has been revoked and removed. Native iOS/desktop visual and client integration verification continues separately; plugin activation and real-secret onboarding remain Leo-controlled gates.
+
+## On-demand `secret|login` cutover — sandbox proof, not installed-service proof
+
+The later `work/ADDENDUM-ONDEMAND.md` replaces proactive saves. Final suite:
+**192 passed in 28.79s**, zero failures/errors/skips, in the Docker boundary above.
+Coverage includes both request/save kinds, strict username presence/validation,
+kind/handle/purpose/owner binding, extra fields, request-only policy, atomic login
+replacement and persistence, untyped-record reissue, fixed argv/environment,
+protected-stdin login pairs, and parser refusals.
+
+A separate cold-start smoke of the kind cutover (before the final short-prefix
+hardening) launched actual `python -m lbs_vault.service` and
+`python -m lbs_vault.broker` processes with private generated fixtures. All
+**29 metadata-only checks passed in 3.55s**: both saves and uses, username/password
+pair delivery, kind/status/list metadata, mismatch/extra/missing-field refusals,
+replay/proactive refusal, output redaction, and password/username absence from
+child argv/environment and plaintext disk/logs. Scratch was removed. UID 1000
+stands in for the trusted service uid inside isolated loopback; this does not
+prove production systemd confinement or a live native client.
+
+Independent review identified a pre-existing cutoff-redaction defect. Before
+the fix, a fake target that wrote a password prefix then stalled returned that
+prefix both below and across the output limit. The same metadata-only probe
+now reports `partial_value_returned:false` in both cases. Eight permanent tests
+exercise actual plugin/service/broker/target paths for timeout and descendant
+drain, each below/across the limit, with short and long prefixes. Every trailing
+proper prefix, even one byte, is suppressed at abnormal cuts; natural EOF keeps
+the four-byte threshold. The final 192-test run covers this final hardening.
+This does not solve the separately documented conditional redaction oracle or
+transformed output.
+
+Raw pytest output/tracebacks remained private inside scratch: a throwaway
+reporter displayed only counts, function names on failure (without parameter
+values), and the numeric pass summary. The daemon/probe scripts printed fixed
+check names and booleans only; no canary, bearer, output bytes or exception text.
+All throwaway scripts were removed after proof. The command above suppresses
+failure tracebacks/captured output for the same reason.
+
+The installed live service was not updated by this cutover. The earlier live
+matrix/root proof remains valid for its earlier code only. A reviewed root
+update and fresh typed fixtures are prerequisites for native authenticated
+served-URL proof. Do not reuse the revoked fixture or old ROOT-STEPS block.
