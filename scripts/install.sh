@@ -32,7 +32,7 @@ done
 
 PREFIX=${LBS_VAULT_PREFIX:-/opt/lbs-vault}
 DIR=${LBS_VAULT_DIR:-/root/.hermes/lbs-vault}
-PORT=${LBS_VAULT_PORT:-8738}
+PORT=${LBS_VAULT_PORT:-938}
 OWNER=${LBS_VAULT_OWNER:-leo}
 PLUGIN_DIR=${LBS_VAULT_PLUGIN_DIR:-/root/.hermes/plugins/lbs-vault}
 BACKUP_ROOT=${LBS_VAULT_BACKUP_ROOT:-/root/.hermes/lbs-vault-backups}
@@ -60,7 +60,9 @@ for v in PREFIX DIR PLUGIN_DIR BACKUP_ROOT UNIT_DIR; do
 	p=${!v}
 	[[ $p =~ ^/[A-Za-z0-9._/-]+$ && $p != *..* && $p != */ ]] || die "$v must be a plain absolute path: $p"
 done
-[[ $PORT =~ ^[0-9]+$ ]] && (( PORT >= 1024 && PORT <= 65535 )) || die "LBS_VAULT_PORT must be 1024..65535"
+[[ $PORT =~ ^[0-9]+$ ]] && (( PORT >= 1 && PORT < 1024 )) || die "LBS_VAULT_PORT must be a privileged port (1..1023)"
+read -r UNPRIVILEGED_START </proc/sys/net/ipv4/ip_unprivileged_port_start
+(( PORT < UNPRIVILEGED_START )) || die "kernel permits non-root binds on port $PORT; restore privileged-port protection first"
 [[ $OWNER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "LBS_VAULT_OWNER must be a plain user name"
 for t in systemctl tailscale curl ss install sha256sum diff "$PY"; do
 	command -v "$t" >/dev/null || die "missing tool: $t"
@@ -243,8 +245,12 @@ printf 'installed by lbs-secret-vault scripts/install.sh\n' >"$STAGE/lib/$MARKER
 chmod 0755 "$STAGE/lib"; chown root:root "$STAGE/lib" "$STAGE/lib/$MARKER"; chmod 0644 "$STAGE/lib/$MARKER"
 # Import check of the staged root-owned copy only: -I keeps the caller's cwd,
 # user site and PYTHON* env off sys.path; no bytecode is written.
-env -i "$PY" -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import lbs_vault.store, lbs_vault.service, lbs_vault.broker' \
-	"$STAGE/lib" || die "staged package failed to import"
+if [[ $DRY_RUN == 0 ]]; then
+	env -i "$PY" -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import lbs_vault.store, lbs_vault.service, lbs_vault.broker' \
+		"$STAGE/lib" || die "staged package failed to import"
+else
+	say "skip: dry-run never imports candidate package code"
+fi
 assert_root_path "$PREFIX"
 if [[ ! -d $PREFIX ]]; then
 	change "create $PREFIX"
@@ -431,6 +437,7 @@ for old in /root/.hermes/plugins/secret-drop /root/.hermes/plugins/hermes-secret
 		say "WARNING: legacy plaintext secret-drop plugin present at $old (stores values in .env); disable it when the gateway is next restarted."
 	fi
 done
+say "Legacy cutover gate: before real secrets or plugin activation, supervisor must review old secret-drop-names metadata, remove approved legacy .env entries and terminal.env_passthrough names without printing values, and disable the old plugin at the authorized gateway restart. This installer never reads/migrates old values or changes gateway config."
 say "Hermes gateway: NOT touched. The agent plugin is staged at $PLUGIN_DIR but not enabled."
 say "Activation owed (Leo): hermes plugins enable lbs-vault, then /restart the gateway."
 say "Served URL: https://$HOST$SERVE_PATH/  (expect: curl -s -o /dev/null -w '%{http_code}' https://$HOST$SERVE_PATH/requests/x -> 401)"

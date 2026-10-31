@@ -26,7 +26,7 @@ done
 
 PREFIX=${LBS_VAULT_PREFIX:-/opt/lbs-vault}
 DIR=${LBS_VAULT_DIR:-/root/.hermes/lbs-vault}
-PORT=${LBS_VAULT_PORT:-8738}
+PORT=${LBS_VAULT_PORT:-938}
 PLUGIN_DIR=${LBS_VAULT_PLUGIN_DIR:-/root/.hermes/plugins/lbs-vault}
 BACKUP_ROOT=${LBS_VAULT_BACKUP_ROOT:-/root/.hermes/lbs-vault-backups}
 UNIT_DIR=${LBS_VAULT_UNIT_DIR:-/etc/systemd/system}

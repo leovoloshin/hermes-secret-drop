@@ -1,8 +1,8 @@
 # Template rendered by scripts/install.sh (@...@ placeholders). Do not install by hand.
 # Root broker: runs only root-approved templates from @DIR@/templates.json and
-# feeds the secret on the child's stdin. It needs CAP_SETUID/SETGID for
-# template run_as and normal network for ssh targets, so it is less confined
-# than lbs-vault.service. Only uid-0 peers may connect to its socket.
+# feeds the secret on the child's stdin. Targets retain the trusted root uid;
+# no general-user run_as is supported. Network is needed for approved SSH
+# targets. Only uid-0 peers may connect to the broker socket.
 [Unit]
 Description=LBS vault broker (template-scoped secret use; socket /run/lbs-vault-broker/broker.sock)
 After=network-online.target
@@ -29,6 +29,8 @@ LimitCORE=0
 # Templates cannot gain privileges through setuid binaries (local `sudo` is
 # therefore unusable inside a template; remote `ssh ... sudo -S` works).
 NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
 ProtectSystem=full
 PrivateTmp=yes
 PrivateDevices=yes

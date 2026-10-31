@@ -37,7 +37,6 @@ TEMPLATE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}\Z")
 HANDLE = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}\Z")
 OWNER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}\Z")
 ENV_KEY = re.compile(r"[A-Z_][A-Z0-9_]{0,63}\Z")
-USER = re.compile(r"[a-z_][a-z0-9_-]{0,31}\Z")
 
 # A template is one fixed program; launchers that turn data into a new program are refused.
 REFUSED_PROGRAMS = {
@@ -82,7 +81,6 @@ class Template:
     description: str = ""
     timeout_s: int = DEFAULT_TIMEOUT_S
     max_output_bytes: int = DEFAULT_MAX_OUTPUT
-    run_as: str | None = None
     cwd: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     stdin_newline: bool = True
@@ -107,7 +105,7 @@ def _parse_template(raw) -> Template:
     if not isinstance(raw, dict):
         raise _invalid("template is not an object")
     allowed = {"id", "handle", "argv", "description", "timeout_s", "max_output_bytes",
-               "run_as", "cwd", "env", "stdin_newline"}
+               "cwd", "env", "stdin_newline"}
     if set(raw) - allowed:
         raise _invalid("unknown template field")
     tid, handle, argv = raw.get("id"), raw.get("handle"), raw.get("argv")
@@ -133,9 +131,6 @@ def _parse_template(raw) -> Template:
     max_output = raw.get("max_output_bytes", DEFAULT_MAX_OUTPUT)
     if type(max_output) is not int or not 1 <= max_output <= MAX_OUTPUT:
         raise _invalid("bad max_output_bytes")
-    run_as = raw.get("run_as")
-    if run_as is not None and (not isinstance(run_as, str) or not USER.fullmatch(run_as)):
-        raise _invalid("bad run_as")
     cwd = raw.get("cwd")
     if cwd is not None and (not _plain(cwd, 4096) or not os.path.isabs(cwd)):
         raise _invalid("bad cwd")
@@ -151,7 +146,7 @@ def _parse_template(raw) -> Template:
     if type(stdin_newline) is not bool:
         raise _invalid("bad stdin_newline")
     return Template(id=tid, handle=handle, argv=tuple(argv), description=description,
-                    timeout_s=timeout_s, max_output_bytes=max_output, run_as=run_as, cwd=cwd,
+                    timeout_s=timeout_s, max_output_bytes=max_output, cwd=cwd,
                     env=dict(env), stdin_newline=stdin_newline)
 
 
@@ -240,22 +235,10 @@ def redact(buf: bytes, secret: bytes, limit: int, *, complete: bool = True) -> t
     return bytes(out), truncated
 
 
-def _child_identity(tpl: Template):
-    """Return (Popen kwargs, HOME, user name) for the template's run_as user."""
-    if tpl.run_as is None:
-        entry = pwd.getpwuid(os.geteuid())
-        return {}, entry.pw_dir, entry.pw_name
-    try:
-        entry = pwd.getpwnam(tpl.run_as)
-    except KeyError:
-        raise VaultError(503, "template_user_missing") from None
-    if entry.pw_uid == os.geteuid():
-        return {}, entry.pw_dir, entry.pw_name
-    if os.geteuid() != 0:
-        raise VaultError(503, "template_user_unavailable")
-    groups = os.getgrouplist(entry.pw_name, entry.pw_gid)
-    return ({"user": entry.pw_uid, "group": entry.pw_gid, "extra_groups": groups},
-            entry.pw_dir, entry.pw_name)
+def _child_identity():
+    """Keep the broker's trusted uid; another uid must never receive its pipe."""
+    entry = pwd.getpwuid(os.geteuid())
+    return entry.pw_dir, entry.pw_name
 
 
 def _child_env(tpl: Template, home: str, user: str) -> dict[str, str]:
@@ -289,7 +272,7 @@ def run_template(tpl: Template, secret: str) -> dict:
     payload = bytearray(secret_bytes)
     if tpl.stdin_newline:
         payload += b"\n"
-    identity, home, user = _child_identity(tpl)
+    home, user = _child_identity()
     cwd = tpl.cwd or (home if os.path.isdir(home) else "/")
     cap = tpl.max_output_bytes + len(secret_bytes) - 1
     buf = bytearray()
@@ -300,7 +283,7 @@ def run_template(tpl: Template, secret: str) -> dict:
         proc = subprocess.Popen(
             list(tpl.argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             env=_child_env(tpl, home, user), cwd=cwd, close_fds=True, start_new_session=True,
-            umask=0o077, **identity,
+            umask=0o077,
         )
     except (OSError, subprocess.SubprocessError):
         secret_bytes[:] = b"\x00" * len(secret_bytes)

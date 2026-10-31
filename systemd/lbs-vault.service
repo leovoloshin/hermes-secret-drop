@@ -27,8 +27,8 @@ RestartSec=5
 # No core dumps: process memory can hold decrypted vault contents.
 LimitCORE=0
 NoNewPrivileges=yes
-CapabilityBoundingSet=
-AmbientCapabilities=
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=@DIR@

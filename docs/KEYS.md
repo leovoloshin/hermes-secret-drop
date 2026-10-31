@@ -6,9 +6,9 @@ Root is trusted. Root Hermes, root plugins and administrators can read root proc
 
 ## Backup
 
-Stop **vault service and broker only**, never Hermes gateway. Copy `vault.enc` and `devices.json` into an encrypted offline backup; copy `keys/vault.key` into a separate encrypted offline escrow. Keep matching key/data generations and permissions, record checksums outside chat. Audit contains metadata only but is still private; include if retention policy requires. Never commit or upload any of these files. Test restore in an isolated root-owned directory with fake fixtures first; production restore checks must not print resolved secrets.
+Stop **vault service and broker only**, never Hermes gateway. Copy `vault.enc` into an encrypted offline backup; copy `keys/vault.key` into a separate encrypted offline escrow. Keep matching key/data generations, permissions and checksums outside chat. A whole `/root/.hermes` backup includes both runtime key and ciphertext and therefore grants decryption: encrypt and restrict that backup, or exclude `keys/` and escrow it separately. The runtime key is not protection against a reader of the complete root home. Audit and device registry contain private metadata; retain them offline for inventory only, never commit/upload them. Test restore with fake fixtures first and never print resolved secrets.
 
-Restore matching key/ciphertext while both vault units are stopped; files 0600 root and directories 0700. Re-provision devices if devices.json was not restored. Root unit restart loads registry. Gateway restart is unrelated.
+Restore matching key/ciphertext while both vault units are stopped; files 0600 root and directories 0700. **Do not restore `devices.json` as an active credential registry:** an old backup can resurrect revoked bearer digests. Initialize it to `{"devices":[]}` and re-provision every owner device with new independent tokens through the private handoff. Keep any prior registry offline solely to reconcile inventory/revocations. Root HTTP restart loads the new registry; gateway restart is unrelated.
 
 ## Rotation
 

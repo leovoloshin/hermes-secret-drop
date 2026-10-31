@@ -857,3 +857,63 @@ def test_installer_copier_refuses_links_and_special_files(tmp_path, kind):
     link_root = tmp_path / "linkroot"
     link_root.symlink_to(src)
     assert _run_stage_copier(link_root, tmp_path / "stage2" / "out").returncode != 0
+
+
+def test_incomplete_headers_have_absolute_deadline_and_release_slots(vault):
+    vault.http.request_deadline = 0.2
+    clients = []
+    stop = threading.Event()
+    try:
+        for _ in range(16):
+            client = socket.create_connection(("127.0.0.1", vault.http.server_port), timeout=2)
+            client.sendall(b"GET / HTTP/1.1\r\nX-Slow: ")
+            clients.append(client)
+
+        def trickle():
+            while not stop.wait(0.02):
+                for client in clients:
+                    try:
+                        client.sendall(b"x")
+                    except OSError:
+                        pass
+
+        writer = threading.Thread(target=trickle, daemon=True)
+        started = time.monotonic()
+        writer.start()
+        for client in clients:
+            client.settimeout(2)
+            assert client.recv(1) == b""
+        assert time.monotonic() - started < 2
+        stop.set()
+        writer.join(2)
+        vault.http.request_deadline = 5
+        assert vault.save() == (200, {"saved": HANDLE})
+    finally:
+        stop.set()
+        for client in clients:
+            client.close()
+
+
+def test_templates_cannot_deliver_stdin_to_another_uid(vault):
+    vault.save()
+    templates = vault.default_templates()
+    templates[0]["run_as"] = "leo"
+    vault.write_templates(templates)
+    result = vault.tool(plugin.vault_use, {"template_id": templates[0]["id"], "handle": HANDLE})
+    assert result == {"error": "template_config_invalid", "status": 503}
+
+
+def test_root_daemon_refuses_unprotected_port_before_opening_storage(monkeypatch, tmp_path):
+    monkeypatch.setenv("LBS_VAULT_PORT", "8738")
+    forbidden_base = tmp_path / "must-not-be-created"
+    monkeypatch.setenv("LBS_VAULT_DIR", str(forbidden_base))
+    monkeypatch.setattr(service_mod.os, "geteuid", lambda: 0)
+    with pytest.raises(RuntimeError, match="kernel-protected privileged port"):
+        service_mod.main()
+    assert not forbidden_base.exists()
+
+
+def test_funnel_marked_requests_are_refused_before_secret_save(vault):
+    status, body = vault.save(headers={"Tailscale-Funnel-Request": "?1"})
+    assert (status, body) == (403, {"error": "funnel_forbidden"})
+    assert vault.store.list(OWNER) == []

@@ -30,6 +30,7 @@ class Limiter:
 class Server(ThreadingHTTPServer):
     daemon_threads=True
     request_queue_size=16
+    request_deadline=5.0
     def __init__(self,addr,store,devices):
         self.store=store; self.devices=devices; self.limiter=Limiter()
         # Bound worker count even against many partial request headers.
@@ -55,6 +56,16 @@ class Handler(BaseHTTPRequestHandler):
     sys_version=''
     def setup(self):
         super().setup(); self.connection.settimeout(5)
+        self.deadline=threading.Timer(getattr(self.server,'request_deadline',5.0),self.expire)
+        self.deadline.daemon=True
+        self.deadline.start()
+    def expire(self):
+        try: self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError: pass
+        self.connection.close()
+    def finish(self):
+        try: super().finish()
+        finally: self.deadline.cancel()
     def log_message(self,*args): pass
     def send_result(self,status,obj):
         blob=json.dumps(obj,separators=(',',':')).encode()
@@ -73,6 +84,8 @@ class Handler(BaseHTTPRequestHandler):
         self.server.limiter.check('failed:'+self.client_address[0],120)
         raise VaultError(status,code)
     def auth(self):
+        if self.headers.get_all('Tailscale-Funnel-Request'):
+            self.refuse(403,'funnel_forbidden')
         # Reject duplicate authority/auth headers, query-bearing and absolute paths.
         for h in ('Host','Authorization','Origin','Content-Length','Content-Type'):
             if len(self.headers.get_all(h,[]))>1: self.refuse(400,'malformed')
@@ -190,6 +203,11 @@ def local_request_server(path,store,owner='leo'):
 
 def main():
     os.umask(0o077)
+    port=int(os.environ.get('LBS_VAULT_PORT','938'))
+    if os.geteuid()==0:
+        cutoff=int(Path('/proc/sys/net/ipv4/ip_unprivileged_port_start').read_text())
+        if not 1<=port<min(cutoff,1024):
+            raise RuntimeError('vault requires a kernel-protected privileged port')
     base=Path(os.environ.get('LBS_VAULT_DIR','/root/.hermes/lbs-vault'))
     store=Store(base)
     sock=Path(os.environ.get('LBS_VAULT_SOCKET','/run/lbs-vault/agent.sock'))
@@ -204,7 +222,7 @@ def main():
     local=local_request_server(local_path,store,agent.owner)
     threading.Thread(target=local.serve_forever,daemon=True).start()
     threading.Thread(target=agent.serve_forever,daemon=True).start()
-    http=make_server(store,port=int(os.environ.get('LBS_VAULT_PORT','8738')))
+    http=make_server(store,port=port)
     try: http.serve_forever()
     finally:
         http.server_close(); agent.shutdown(); agent.server_close(); sock.unlink(missing_ok=True)

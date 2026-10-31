@@ -54,13 +54,12 @@ directory with the same properties. Keep it `0600 root:root`.
 {
   "templates": [
     {
-      "id": "thedoorpc.sudo-uptime",
-      "handle": "thedoorpc.sudo",
-      "argv": ["/usr/bin/ssh", "-o", "BatchMode=yes", "leo@thedoorpc", "sudo", "-S", "-p", "", "uptime"],
-      "description": "Run uptime under sudo on thedoorpc",
+      "id": "example.sudo-uptime",
+      "handle": "example.sudo",
+      "argv": ["/usr/bin/ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=/root/.ssh/known_hosts", "operator@example.invalid", "sudo", "-S", "-p", "", "uptime"],
+      "description": "Example only: approved remote uptime with root-managed SSH configuration",
       "timeout_s": 30,
-      "max_output_bytes": 65536,
-      "run_as": "leo"
+      "max_output_bytes": 65536
     }
   ]
 }
@@ -74,19 +73,23 @@ directory with the same properties. Keep it `0600 root:root`.
 | `description` | optional, ≤ 200 chars, shown to the agent |
 | `timeout_s` | optional, 1–300, default 60 |
 | `max_output_bytes` | optional, 1–262144, default 65536 |
-| `run_as` | optional user name; default the broker's user (root). Prefer an unprivileged user. |
-| `cwd` | optional absolute directory; default `run_as`'s home (or `/`) |
+| `cwd` | optional absolute root-trusted directory; default root's home (or `/`) |
 | `env` | optional fixed `KEY: value` map (≤ 32 entries). `LD_*`, `PYTHON*`, `PERL*`, `RUBY*`, `NODE_*`, `BASH_*`, `GCONV_*`, `IFS`, `ENV`, `BASH_ENV`, `DISPLAY`, `SSH_ASKPASS`, `SUDO_ASKPASS` are refused. Never put a secret here. |
 | `stdin_newline` | optional bool, default true: append `\n` after the value |
 
-`python3 -m lbs_vault.broker check` validates the file and prints template
-metadata (never argv or env). A validation failure prints a fixed reason.
+The installed-code check below validates templates and prints only metadata.
+A validation failure prints a fixed reason. Never run a root `python -m`
+command from the user-owned checkout.
 
 ### Secret delivery: protected stdin only
 
-The value plus a newline is written to a pipe that only the child holds, then
-the pipe is closed. It is never placed in argv, the environment, a file, or an
-askpass helper. Programs that read a password from stdin work directly:
+The value plus a newline is written to an anonymous stdin pipe and the write
+end is closed after delivery. Targets retain the broker's trusted root uid.
+No `run_as` field is accepted: another process under a general user's uid
+could inspect that user's target stdin or control its SSH configuration.
+Root processes remain trusted and can inspect root memory/files/pipes.
+The value is never placed in argv, environment, a file, or an askpass helper.
+Programs that read a password from stdin work directly:
 `sudo -S -p ''`, `ssh host sudo -S -p '' cmd`, `cryptsetup --key-file=-`,
 `openssl ... -passin stdin`, or a test target that reads one line from stdin.
 Because the value is stored with no control characters, a single line is
@@ -99,8 +102,8 @@ add it to argv or env.
 * Environment built from scratch: `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
   `LANG`/`LC_ALL=C.UTF-8`, `HOME`, `USER`, `LOGNAME`, then the template's fixed `env`.
   Nothing is inherited from the broker or the agent.
-* `start_new_session=True` (own session and process group), `close_fds`, `umask 077`,
-  optional `run_as` with that user's supplementary groups.
+* `start_new_session=True` (own session and process group), `close_fds`, `umask 077`.
+  Production targets stay root, with no Linux capabilities; no uid switching.
 * On timeout the whole process group gets `SIGTERM`, then `SIGKILL` after 2 s.
   After a normal exit, anything left in the group is killed. The leader is not
   reaped until after the group kill, so its process-group id cannot be reused.
@@ -148,7 +151,6 @@ output, exception text, or value is logged.
 | `broker_unavailable` | 503 | broker socket not reachable |
 | `broker_timeout` | 504 | no broker reply within the client wait (default 300 s + grace) |
 | `template_config_missing` / `_insecure` / `_invalid` / `_unreadable` | 503 | fix `templates.json` |
-| `template_user_missing` / `template_user_unavailable` | 503 | `run_as` user absent, or broker not root |
 
 ## Running
 
@@ -160,8 +162,8 @@ output, exception text, or value is logged.
 | `LBS_VAULT_SOCKET` | `/run/lbs-vault/agent.sock` | service, plugin |
 
 ```
-python3 -m lbs_vault.broker          # serve (same as `serve`)
-python3 -m lbs_vault.broker check    # validate templates.json
+sudo systemctl start lbs-vault-broker.service
+sudo /usr/bin/python3 -I -c 'import sys; sys.path.insert(0,"/opt/lbs-vault/lib"); from lbs_vault.broker import main; raise SystemExit(main())' check
 ```
 
 Run it as root under its own systemd unit with
