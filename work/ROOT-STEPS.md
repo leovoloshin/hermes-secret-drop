@@ -1,8 +1,8 @@
-# Next root step: broker proof, exact-canary scans, scoped revocation
+# Completed root step — DO NOT RERUN
 
-Setup completed by LBS. **Do not rerun setup or its old failure-cleanup block.** Builder completed the authenticated served-URL matrix and saved the fake canary successfully. Probe: `20261031-200f6a5bf966`.
+LBS completed this block successfully on 2026-10-31 at 18:17:47–18:17:51 UTC, exit 0, and the builder read its metadata-only passed `root-proof.json`. Broker/scans/revocation/cleanup are complete; the fixture no longer exists. This file is retained as reviewed command provenance only. See `work/VERIFY.md` and `docs/TESTING.md`. **Do not rerun setup, rollback or this block.**
 
-Run the single block below as root after review. It:
+The historical single block below was reviewed and executed by LBS. It:
 
 1. Uses only the installed broker socket with the isolated fake owner/template/handle (no gateway tool/plugin activation).
 2. Verifies the helper exit/output without printing a secret-bearing reply.

@@ -54,4 +54,16 @@ LBS reports the reviewed root setup completed successfully: installed library ma
 
 The save response was exactly the expected handle-only object. Every response was checked in-process for both the canary and bearer; neither appeared. Curl used `-q`, an empty allowlisted environment, private `--header @file` / `--data-binary @file`, and private response files deleted after validation. No value was put in argv, environment, URL or displayed output. Status-only evidence: ignored private `client-results.json`.
 
-**Status: authenticated matrix/save complete; root broker/scans/revocation pending.** Next exact root block: `work/ROOT-STEPS.md`. It invokes only the fake owner's installed broker template, performs exact-pattern absence scans without displaying message/journal contents, and revokes/removes only the disposable fixture. No `LBS-VAULT-SPARK-DONE` claim until that evidence returns. Progress: `work/VERIFY.md`.
+**Status: Spark live canary verification complete.** LBS executed the reviewed root block successfully, and the builder read its metadata-only `root-proof.json`: `status=passed`, broker exit `0`, no timeout, exact output `accepted:[REDACTED]`, and revoked test bearer HTTP `401`. Root proof ran `2026-10-31T18:17:47Z` through `18:17:51Z`.
+
+| Exact-canary scan | Observed root result |
+|---|---|
+| Fake owner ciphertext | Absent in raw bytes |
+| Current audit | Absent in raw bytes |
+| Previous audit archive | File not present |
+| state.db / WAL / SHM | Absent in raw bytes in all three |
+| Journal since setup, all exported fields | Absent in export bytes |
+
+These are exact fixed-pattern byte searches, not SQL row reconstruction or detection of arbitrary encoding/compression. No matching lines, messages, canary or bearer values were printed. Root proof records removal of the test template/device, fake ciphertext, helper/directory, private credentials and leo bearer handoff; vault key retained. LBS reports the vault service active. No gateway/plugin/principal/Serve modification was made by the root block.
+
+Evidence: metadata-only `work/live-probe-20261031-200f6a5bf966/root-proof.json` (0600 leo, intentionally git-ignored), with non-sensitive summary in `work/VERIFY.md`. Do not rerun `work/ROOT-STEPS.md`: this fixture has been revoked and removed. Native iOS/desktop visual and client integration verification continues separately; plugin activation and real-secret onboarding remain Leo-controlled gates.

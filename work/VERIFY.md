@@ -1,29 +1,32 @@
-# Installed Spark vault verification
+# Installed Spark vault verification — complete
 
 Probe: `20261031-200f6a5bf966`.
 
-Authorization: `work/LBS-INSTALL-DONE.md` and subsequent direct LBS instructions. Observed unauthenticated/authenticated status matrices are in `docs/TESTING.md` (do not interpret client-marker tests as actual Funnel traffic).
+Authorization: `work/LBS-INSTALL-DONE.md` and direct LBS instructions. Detailed observed HTTP matrices and scan summary: `docs/TESTING.md`.
 
-## Completed
+## Evidence and provenance
 
-- LBS reports the reviewed setup block ran as root successfully: installed library matches repo, registry backed up, vault service active, private 0600 header/metadata handed off, and gateway/plugin/Funnel/principals untouched.
-- Builder read only the non-secret `root-ready.json` metadata into the transcript. Private input/header file permissions/ownership were checked in-process; their values were not printed.
-- Authenticated live curl matrix and fake canary save completed at `2026-10-31T17:45:40Z`. Every expected status passed; save returned exactly the handle-only object. Each response was checked in-process for canary/bearer absence.
-- Curl disabled .curlrc (`-q`), used an empty allowlisted child environment and file-based auth/body input, and deleted private temporary request/response files. No canary/bearer values were placed in argv, environment, URLs or displayed output.
-- Safe machine-readable client evidence exists at ignored `work/live-probe-20261031-200f6a5bf966/client-results.json`. The original fake pattern and test header remain 0600 in a 0700 ignored directory for the next step.
+- LBS reports installation of reviewed source `9257f01`: 13 changes, both units active, tailnet Serve path installed, gateway untouched, plugin staged/not enabled.
+- LBS ran the reviewed setup; installed library matches repo, registry backed up, disposable device/header created in the isolated fake owner namespace. No real owner device or Telegram principal mapping was provisioned.
+- Builder authenticated live curl matrix/save passed on `2026-10-31T17:45:40Z`. Expected statuses all matched; save response was exactly the handle-only object. Response bytes were checked in-process for canary and bearer absence. Private file-based input, curl `-q`, allowlisted empty child environment and private disposable response files kept values out of arguments/environment/URLs/displayed output.
+- LBS ran the reviewed broker/scan/revoke block as root at `2026-10-31T18:17:47Z`–`18:17:51Z`, exit 0 and root-probe-complete signal. Builder read metadata-only `root-proof.json`: status passed, broker exit 0/no timeout, output exactly `accepted:[REDACTED]`, revoked bearer HTTP 401.
+- Root exact-pattern scans found no raw canary in fake owner ciphertext, current audit, state.db, WAL or SHM; all exported journal fields since setup were also negative. Previous audit archive did not exist. This is finite raw-byte/export evidence, not SQL row reconstruction or arbitrary encoding/compression detection. No matching lines or message contents were displayed.
+- Root proof records test template/device removal, HTTP service restart, fake ciphertext/helper/directory deletion, private credential removal and leo bearer-handoff removal; vault key retained. LBS reports vault service active. No gateway/plugin/principal/Serve modification by that block.
 
-## Fixture scope
+## Retained private test evidence
 
-Owner/device: `probe-20261031-200f6a5bf966`.
-Handle/template: `canary.20261031-200f6a5bf966`.
-This is an isolated fake-owner namespace, not Leo's real device or Telegram principal mapping. No real secret or real target is involved.
+Ignored directory: `work/live-probe-20261031-200f6a5bf966/` (0700).
+Metadata: `root-ready.json`, `client-results.json`, `root-proof.json` (0600 leo).
+Original generated fake `canary.txt` remains private for exact-pattern verification. Its contents and the bearer have never been printed or read into model arguments/transcript. Never commit or dump these private artifacts; the public notes contain no values.
 
-## Next root gate
+## Scope and remaining activation
 
-`work/ROOT-STEPS.md` now contains ONLY the next broker/scan/revoke block; do not rerun old setup/rollback. It validates the pinned canary/helper digest, invokes the installed broker, immediately removes this template/device and verifies old bearer HTTP 401, then scans before deleting evidence. Scans filter exact raw canary bytes from fake ciphertext, audit, all exported journal fields since setup and required state.db (optional WAL/SHM), never printing matches or querying SQL. Only after scans pass are fake namespace/helper/private credentials removed.
+Owner/device `probe-20261031-200f6a5bf966`, handle/template `canary.20261031-200f6a5bf966` are revoked/removed. **Do not rerun ROOT-STEPS or reuse the fixture.**
 
-Broker use, root-only absence scans and cleanup are **not yet verified**. `LBS-VAULT-SPARK-DONE` remains pending the root metadata-only proof. No root action was executed by the builder, and no gateway restart, plugin enable, Hermes config edit, Telegram send, Funnel/other Serve change or thedoorpc action occurred.
+Spark verification is complete. Last full pytest result: **105 passed in 9.26s**; final code audited at `816904d`, T3/T1 reports and deployment gates in `docs/SECURITY-REVIEW.md`. New work only records operator/observed evidence; product code unchanged.
+
+Plugin enable, gateway restart, principal changes, real-secret onboarding and Serve changes remain Leo's call and were not performed. Native iOS `w24:p2` and desktop `w1Z:p2` acceptance/visual verification continue separately; this is not the global native-product done signal.
 
 ## Review
 
-Both handoffs received focused T1/guidance reviews. Setup's initial three low issues were fixed. The next block's review fixes revoke the credential before long scans, export all journal fields, require state.db, label raw-byte search limits, record granular cleanup progress and discard journal stderr. Re-review found no new Critical/High/Medium/Low issues; syntax was checked without execution. Product code is unchanged; the prior full T3 audit and its deployment gates/needs-validation leads are unchanged.
+Both root handoffs received focused T1/guidance review. Reported low issues were corrected; rereview found no new Critical/High/Medium/Low issues. Root syntax was checked without executing root actions by the builder. Prior full T3 needs-validation leads (local slot cycling and conditional redaction oracle), host trust gates and native UI scope remain explicitly unchanged.
