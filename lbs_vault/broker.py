@@ -119,6 +119,8 @@ def _parse_template(raw) -> Template:
     program = argv[0]
     if not os.path.isabs(program) or os.path.normpath(program) != program:
         raise _invalid("argv[0] must be a normalized absolute path")
+    program = _trusted_path(program)
+    argv = [program, *argv[1:]]
     name = os.path.basename(program)
     if name in REFUSED_PROGRAMS or name.startswith(("python", "perl", "ruby", "php", "lua")):
         raise _invalid("interpreter or shell launcher refused")
@@ -134,6 +136,7 @@ def _parse_template(raw) -> Template:
     cwd = raw.get("cwd")
     if cwd is not None and (not _plain(cwd, 4096) or not os.path.isabs(cwd)):
         raise _invalid("bad cwd")
+    if cwd is not None: cwd = _trusted_path(cwd, directory=True)
     env = raw.get("env", {})
     if not isinstance(env, dict) or len(env) > 32:
         raise _invalid("bad env")
@@ -153,6 +156,29 @@ def _parse_template(raw) -> Template:
 def _check_owned(st: os.stat_result) -> None:
     if st.st_uid != os.geteuid() or st.st_mode & 0o022:
         raise VaultError(503, "template_config_insecure")
+
+def _trusted_path(path, *, directory=False):
+    """Only the broker's trusted uid/root may control executable/cwd paths."""
+    def check(candidate):
+        for part in [*reversed(candidate.parents), candidate]:
+            st = part.lstat()
+            if st.st_uid not in (0, os.geteuid()):
+                raise VaultError(503, 'template_target_insecure')
+            # Root-owned sticky /tmp protects root-owned children from rename.
+            sticky_dir = stat.S_ISDIR(st.st_mode) and bool(st.st_mode & stat.S_ISVTX)
+            if not stat.S_ISLNK(st.st_mode) and st.st_mode & 0o022 and not sticky_dir:
+                raise VaultError(503, 'template_target_insecure')
+    try:
+        original = Path(path)
+        check(original)
+        resolved = original.resolve(strict=True)
+        check(resolved)
+        st = resolved.stat()
+        if not (stat.S_ISDIR(st.st_mode) if directory else stat.S_ISREG(st.st_mode)):
+            raise VaultError(503, 'template_target_insecure')
+        return str(resolved)
+    except (OSError, RuntimeError):
+        raise VaultError(503, 'template_target_insecure') from None
 
 
 def load_templates(path=None) -> dict[str, Template]:
@@ -273,7 +299,7 @@ def run_template(tpl: Template, secret: str) -> dict:
     if tpl.stdin_newline:
         payload += b"\n"
     home, user = _child_identity()
-    cwd = tpl.cwd or (home if os.path.isdir(home) else "/")
+    cwd = _trusted_path(tpl.cwd or (home if os.path.isdir(home) else "/"), directory=True)
     cap = tpl.max_output_bytes + len(secret_bytes) - 1
     buf = bytearray()
     overflow = False

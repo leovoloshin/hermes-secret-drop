@@ -15,6 +15,10 @@ from cryptography.fernet import Fernet
 
 HANDLE = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}\Z")
 ID = re.compile(r"[A-Za-z0-9_-]{43}\Z")
+MAX_ITEMS_PER_OWNER = 128
+MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
+MAX_FILE_BYTES = 8 * 1024 * 1024
+MAX_AUDIT_BYTES = 4 * 1024 * 1024
 
 class VaultError(Exception):
     def __init__(self, status, code):
@@ -45,7 +49,10 @@ def read_private(path):
         s = os.fstat(f.fileno())
         if not stat.S_ISREG(s.st_mode) or s.st_uid != os.geteuid() or stat.S_IMODE(s.st_mode) != 0o600 or s.st_nlink != 1:
             raise VaultError(500, "unsafe_permissions")
-        return f.read()
+        if s.st_size > MAX_FILE_BYTES: raise VaultError(500, "store_too_large")
+        data = f.read(MAX_FILE_BYTES + 1)
+        if len(data) > MAX_FILE_BYTES: raise VaultError(500, "store_too_large")
+        return data
 
 def atomic(path, data):
     fd, name = tempfile.mkstemp(prefix='.write-', dir=path.parent)
@@ -91,19 +98,40 @@ class Store:
                 os.close(fd)
 
     def persist(self, data):
-        atomic(self.path, self.crypto.encrypt(json.dumps(data, separators=(',', ':')).encode()))
+        payload = json.dumps(data, separators=(',', ':')).encode()
+        if len(payload) > MAX_DOCUMENT_BYTES: raise VaultError(413, "vault_capacity")
+        atomic(self.path, self.crypto.encrypt(payload))
 
     def audit(self, owner, handle, op, status):
         # All arguments here are validated metadata, never caller exception text.
         event = json.dumps(dict(time=time.time(), actor=owner, handle=handle, op=op, status=status)).encode()+b'\n'
-        fd = os.open(self.base/'audit.jsonl', os.O_WRONLY|os.O_APPEND|os.O_CREAT|os.O_NOFOLLOW, 0o600)
-        try:
+        def checked_open(path, flags):
+            fd = os.open(path, flags|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CREAT, 0o600)
             s = os.fstat(fd)
-            if not stat.S_ISREG(s.st_mode) or s.st_nlink != 1 or s.st_uid != os.geteuid() or stat.S_IMODE(s.st_mode) != 0o600:
+            if not stat.S_ISREG(s.st_mode) or s.st_nlink!=1 or s.st_uid!=os.geteuid() or stat.S_IMODE(s.st_mode)!=0o600:
+                os.close(fd)
                 raise VaultError(500,'unsafe_permissions')
-            os.write(fd,event)
-            os.fsync(fd)
-        finally: os.close(fd)
+            return fd
+        lock_fd = checked_open(self.base/'.audit.lock', os.O_RDWR)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            path = self.base/'audit.jsonl'
+            fd = checked_open(path, os.O_WRONLY|os.O_APPEND)
+            try:
+                if os.fstat(fd).st_size+len(event)>MAX_AUDIT_BYTES:
+                    os.replace(path,self.base/'audit.previous.jsonl')
+                    os.close(fd)
+                    fd = -1
+                    fd = checked_open(path, os.O_WRONLY|os.O_APPEND)
+                view=memoryview(event)
+                while view:
+                    written=os.write(fd,view)
+                    if written<=0: raise OSError('audit write failed')
+                    view=view[written:]
+                os.fsync(fd)
+            finally:
+                if fd>=0: os.close(fd)
+        finally: os.close(lock_fd)
 
     def request(self, owner, handle, purpose, ttl=600):
         text(owner,64); handle_valid(handle); text(purpose,256)
@@ -151,6 +179,8 @@ class Store:
                 if (r['handle'],r['purpose'])!=(handle,purpose): raise VaultError(400,'request_mismatch')
                 r['status']='saved'
             key=owner+':'+handle
+            if key not in d['items'] and sum(item['owner']==owner for item in d['items'].values()) >= MAX_ITEMS_PER_OWNER:
+                raise VaultError(429, 'owner_quota')
             d['items'][key]=dict(owner=owner,handle=handle,purpose=purpose,username=username,updated_at=time.time(),value=value)
             self.persist(d); self.audit(owner,handle,'save','saved')
             return {'saved':handle}

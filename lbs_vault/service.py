@@ -11,11 +11,26 @@ import struct
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.client import LineTooLong
 from pathlib import Path
 from .store import Store, VaultError, read_private, private_dir
 
 HOST = 'spark-dd6e.tail4b7569.ts.net'
 MAX_BODY = 16384
+MAX_HEADERS = 8192
+
+class HeaderReader:
+    """Cap aggregate headers before the stdlib parser allocates a message."""
+    def __init__(self, stream):
+        self.stream=stream; self.remaining=MAX_HEADERS
+    def readline(self, size=-1):
+        limit=self.remaining+1
+        line=self.stream.readline(min(size,limit) if size>=0 else limit)
+        self.remaining-=len(line)
+        if self.remaining<0: raise LineTooLong('header budget')
+        return line
+    def __getattr__(self,name):
+        return getattr(self.stream,name)
 
 class Limiter:
     def __init__(self): self.lock=threading.Lock(); self.buckets={}
@@ -54,6 +69,15 @@ def make_server(store,host='127.0.0.1',port=0,devices=None):
 class Handler(BaseHTTPRequestHandler):
     server_version='LBSVault'
     sys_version=''
+    def parse_request(self):
+        if len(self.raw_requestline)>MAX_HEADERS:
+            self.request_version='HTTP/1.0'
+            self.requestline=''
+            self.command=None
+            self.send_error(414)
+            return False
+        self.rfile=HeaderReader(self.rfile)
+        return super().parse_request()
     def setup(self):
         super().setup(); self.connection.settimeout(5)
         self.deadline=threading.Timer(getattr(self.server,'request_deadline',5.0),self.expire)
@@ -77,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Connection','close')
         self.end_headers(); self.wfile.write(blob); self.close_connection=True
     def send_error(self,code,message=None,explain=None):
-        self.send_result(code,{'error':'malformed' if code==400 else 'method_not_allowed'})
+        self.send_result(code,{'error':'malformed' if code in (400,414,431) else 'method_not_allowed'})
     def refuse(self,status,code):
         # Serve uses loopback for every peer. Failed auth must not exhaust an
         # authenticated device's independent budget.

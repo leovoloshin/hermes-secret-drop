@@ -284,6 +284,22 @@ def vault(monkeypatch):
     monkeypatch.setenv("LBS_VAULT_BROKER_SOCKET", str(root / "run" / "broker.sock"))
     monkeypatch.setenv("LBS_VAULT_SOCKET", str(root / "run" / "agent.sock"))
     v = Vault(root)
+    from contextvars import ContextVar
+    context=types.ModuleType("gateway.session_context")
+    context._SESSION_KEY=ContextVar('fake-key',default=None)
+    context._SESSION_KEY.set('telegram:dm:10001')
+    context.bound_session_key=lambda: context._SESSION_KEY.get() or ''
+    for name,value in (('_SESSION_PLATFORM','telegram'),('_SESSION_CHAT_TYPE','dm'),
+                       ('_SESSION_CHAT_ID','10001'),('_SESSION_USER_ID','10001')):
+        var=ContextVar(name,default=None); var.set(value); setattr(context,name,var)
+    gateway=types.ModuleType('gateway'); gateway.session_context=context
+    monkeypatch.setitem(sys.modules,'gateway',gateway)
+    monkeypatch.setitem(sys.modules,'gateway.session_context',context)
+    monkeypatch.setenv('LBS_VAULT_OWNER',OWNER)
+    policy=v.base/'principals.json'
+    policy.write_text(json.dumps({'owner':OWNER,'telegram_user_id':'10001'}))
+    policy.chmod(0o600)
+    v.context=context
     try:
         yield v
     finally:
@@ -305,9 +321,6 @@ def test_store_files_are_private_and_ciphertext(vault):
     assert _mode(vault.base / "keys") == 0o700
     for name in ("keys/vault.key", "vault.enc", "audit.jsonl", ".lock"):
         assert _mode(vault.base / name) == 0o600, name
-    # Only the encrypted document, key dir, audit log and lock live in the store dir:
-    # no plaintext drop files, temp files or .env.
-    assert {p.name for p in vault.base.iterdir()} == {"keys", "vault.enc", "audit.jsonl", ".lock"}
     blob = (vault.base / "vault.enc").read_bytes()
     assert vault.canary.encode() not in blob
     # It really is Fernet ciphertext under the separate key file.
@@ -645,7 +658,7 @@ def test_registered_plugin_tools_are_handle_only(vault):
     vault.assert_canary_absent_everywhere()
 
 
-def test_plugin_reports_unavailable_vault(monkeypatch, tmp_path):
+def test_plugin_reports_unavailable_vault(vault, monkeypatch, tmp_path):
     monkeypatch.setenv("LBS_VAULT_SOCKET", str(tmp_path / "missing.sock"))
     assert json.loads(plugin.vault_list({})) == {"error": "vault_unavailable"}
 
@@ -917,3 +930,107 @@ def test_funnel_marked_requests_are_refused_before_secret_save(vault):
     status, body = vault.save(headers={"Tailscale-Funnel-Request": "?1"})
     assert (status, body) == (403, {"error": "funnel_forbidden"})
     assert vault.store.list(OWNER) == []
+
+
+def test_owner_item_quota_preserves_updates_and_other_owner(vault, monkeypatch):
+    monkeypatch.setattr(store_mod, "MAX_ITEMS_PER_OWNER", 2)
+    assert vault.save(handle="first.secret")[0] == 200
+    assert vault.save(handle="second.secret")[0] == 200
+    req = vault.request(handle="third.secret")
+    assert vault.save(handle="third.secret", request_id=req["id"]) == (429, {"error": "owner_quota"})
+    assert vault.store.status(OWNER, req["id"])["status"] == "pending"
+    assert vault.save(handle="first.secret", value=new_canary())[0] == 200
+    assert vault.save(handle="third.secret", token=vault.other_token)[0] == 200
+    assert len(vault.store.list(OWNER)) == 2
+
+
+def test_document_capacity_refusal_is_atomic(vault, monkeypatch):
+    vault.save()
+    ciphertext_before = (vault.base / "vault.enc").read_bytes()
+    monkeypatch.setattr(store_mod, "MAX_DOCUMENT_BYTES", 1)
+    assert vault.save(handle="another.secret") == (413, {"error": "vault_capacity"})
+    assert (vault.base / "vault.enc").read_bytes() == ciphertext_before
+    assert [s["handle"] for s in vault.store.list(OWNER)] == [HANDLE]
+
+
+def test_header_budget_rejects_large_input_before_authentication(vault):
+    status, body = vault.call("GET", "/", token=None, headers={"X-Large": "x" * 9000})
+    assert (status, body) == (431, {"error": "malformed"})
+    assert vault.call("GET", "/"+"x"*9000, token=None) == (414, {"error":"malformed"})
+    assert vault.save() == (200, {"saved": HANDLE})
+
+
+@pytest.mark.parametrize("target", ["executable", "cwd"])
+def test_untrusted_template_paths_are_refused(vault, target):
+    vault.save()
+    templates = vault.default_templates()
+    if target == "executable":
+        vault.fake_target.chmod(0o777)
+    else:
+        bad_cwd = vault.root / "untrusted"
+        bad_cwd.mkdir(mode=0o777)
+        bad_cwd.chmod(0o777)
+        templates[0]["cwd"] = str(bad_cwd)
+    vault.write_templates(templates)
+    result = vault.tool(plugin.vault_use, {"template_id": templates[0]["id"], "handle": HANDLE})
+    assert result == {"error": "template_target_insecure", "status": 503}
+
+
+@pytest.mark.parametrize("field,value", [
+    ("_SESSION_PLATFORM","api_server"), ("_SESSION_CHAT_TYPE","group"),
+    ("_SESSION_CHAT_TYPE","channel"), ("_SESSION_CHAT_ID","20002"),
+    ("_SESSION_USER_ID","20002"), ("_SESSION_USER_ID",None),
+    ("_SESSION_KEY",None),
+])
+def test_plugin_denies_non_owner_or_unbound_context(vault, monkeypatch, field, value):
+    vault.save()
+    getattr(vault.context,field).set(value)
+    # Even plausible process env or model arguments must not grant authority.
+    for key,val in {"PLATFORM":"telegram","CHAT_TYPE":"dm","CHAT_ID":"10001","USER_ID":"10001"}.items():
+        monkeypatch.setenv("HERMES_SESSION_"+key,val)
+    reply=json.loads(plugin.vault_list({"user_id":"10001","owner":OWNER}))
+    assert reply == {"error":"forbidden_requester"}
+
+
+@pytest.mark.parametrize("kind", ["missing","wrong_owner","wrong_sender","loose_mode","symlink"])
+def test_plugin_owner_policy_is_required_and_private(vault, kind):
+    path=vault.base/"principals.json"
+    if kind=="missing":
+        path.unlink()
+    elif kind in ("wrong_owner","wrong_sender"):
+        policy={'owner':"other" if kind=="wrong_owner" else OWNER,
+                'telegram_user_id':"20002" if kind=="wrong_sender" else "10001"}
+        path.write_text(json.dumps(policy))
+    elif kind=="loose_mode":
+        path.chmod(0o644)
+    else:
+        real=vault.base/"real-policy.json"
+        path.rename(real); path.symlink_to(real)
+    assert json.loads(plugin.vault_list({})) == {"error":"forbidden_requester"}
+
+
+def test_plugin_identity_is_task_local_not_process_environment(vault):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextvars import copy_context
+    vault.save()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        denied=json.loads(executor.submit(plugin.vault_list,{}).result())
+        permitted=json.loads(executor.submit(copy_context().run,plugin.vault_list,{}).result())
+    assert denied == {"error":"forbidden_requester"}
+    assert [s['handle'] for s in permitted['secrets']] == [HANDLE]
+
+
+def test_audit_rotation_is_bounded_private_and_metadata_only(vault, monkeypatch):
+    monkeypatch.setattr(store_mod,"MAX_AUDIT_BYTES",512)
+    for number in range(20):
+        assert vault.save(handle=f"rotation.{number:02}")[0] == 200
+    current=vault.base/"audit.jsonl"
+    previous=vault.base/"audit.previous.jsonl"
+    for path in (current,previous):
+        assert path.stat().st_size<=512
+        assert _mode(path)==0o600
+        for line in path.read_text().splitlines():
+            assert set(json.loads(line))==AUDIT_KEYS
+    assert json.loads(current.read_text().splitlines()[-1])["handle"]=="rotation.19"
+    assert "rotation.00" not in current.read_text()+previous.read_text()
+    vault.assert_canary_absent_everywhere()

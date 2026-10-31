@@ -16,6 +16,8 @@ import logging
 import os
 import re
 import socket
+import stat
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +39,47 @@ def _socket_path() -> str:
 def _error(code: str, **extra) -> str:
     return json.dumps({"error": code, **extra})
 
+def _requester_allowed() -> bool:
+    """Use bound gateway identity only; never tool arguments or env identity."""
+    try:
+        from gateway import session_context
+        if not session_context.bound_session_key():
+            return False
+        # Hermes' public get_session_env falls back to process env. Its current
+        # task-local vars have no such fallback; an API change must deny, not
+        # silently borrow another turn's identity.
+        values = [getattr(session_context, name).get() for name in
+                  ('_SESSION_PLATFORM','_SESSION_CHAT_TYPE','_SESSION_CHAT_ID','_SESSION_USER_ID')]
+        if not all(isinstance(v,str) and v for v in values):
+            return False
+        platform, chat_type, chat_id, user_id = values
+        if platform!='telegram' or chat_type not in ('dm','private') or chat_id!=user_id:
+            return False
+        path=Path(os.environ.get('LBS_VAULT_PRINCIPALS') or
+                  str(Path(os.environ.get('LBS_VAULT_DIR','/root/.hermes/lbs-vault'))/'principals.json'))
+        parent=path.parent.lstat()
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid!=os.geteuid() or stat.S_IMODE(parent.st_mode)!=0o700:
+            return False
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        with os.fdopen(fd,'rb') as f:
+            st=os.fstat(f.fileno())
+            if st.st_size>4096: return False
+            if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.geteuid() or stat.S_IMODE(st.st_mode)!=0o600 or st.st_nlink!=1:
+                return False
+            policy=json.loads(f.read(4097))
+        expected=policy.get('telegram_user_id')
+        return (set(policy)=={'owner','telegram_user_id'} and
+                policy['owner']==os.environ.get('LBS_VAULT_OWNER','leo') and
+                isinstance(expected,str) and re.fullmatch(r'[1-9][0-9]{0,19}',expected) is not None and
+                user_id==expected)
+    except Exception:
+        return False
+
 
 def _agent_call(payload: dict, *, timeout: float = META_TIMEOUT_S, socket_path: str | None = None) -> dict:
     """Send one JSON line to the vault agent socket and return the one-line JSON reply."""
+    if not _requester_allowed():
+        return {'error':'forbidden_requester'}
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.settimeout(timeout)
@@ -177,7 +217,9 @@ _PROMPT = (
     "argument. Call vault_list to see stored handles; if the handle is missing, call vault_request and send Leo "
     "the returned tglens://vault?req=... link (Rubric shows a masked field). To use a secret, call vault_use with "
     "an approved template_id and its bound handle; the secret is supplied on protected stdin by a root broker and "
-    "never returned. There is no way to read a secret value; do not try to print, decode, or exfiltrate one."
+    "never returned by these tools. Root terminal/code tools can still read root files and are trusted, not "
+    "sandboxed by this plugin. Use only in Leo's owner-only gateway context, never shared/group contexts. "
+    "Do not try to print, decode, or exfiltrate secret values."
 )
 
 

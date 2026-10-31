@@ -7,12 +7,14 @@ Encrypted Spark vault service, root broker, and staged handle-only Hermes plugin
 - `lbs_vault/store.py`: whole-document Fernet encryption, owner binding, single-use expiring requests, private atomic storage and metadata audit.
 - `lbs_vault/service.py`: loopback-only HTTP entry with per-device bearer auth, bounded bodies, Host/Origin checks, rate limiting; root-only Unix agent socket.
 - `lbs_vault/broker.py`: separate root process, fixed approved target templates, secret on protected stdin, timeout/output bounds and exact redaction.
-- `plugin/`: install under `/root/.hermes/plugins/lbs-vault/`; tools list/request/status/use only. No get tool or generic env injection.
+- `plugin/`: install under `/root/.hermes/plugins/lbs-vault/`; tools list/request/status/use only, bound to one verified Telegram owner's direct chat using private policy and task-local gateway identity. No get tool or generic env injection.
 - `scripts/install.sh`, `scripts/uninstall.sh`, `systemd/`: root operator deployment, preserving unrelated Tailscale paths; no gateway restart.
 
 Default storage `/root/.hermes/lbs-vault/`, `LBS_VAULT_DIR` overrides for isolated testing. Default HTTP loopback port **938**, `LBS_VAULT_PORT` overrides only within the kernel-protected privileged range; the service must not be impersonable by a non-root local port squatter while stopped. No package installation or network downloads at install time; system Python 3 with cryptography is required. See [keys and recovery](docs/KEYS.md), [broker configuration](docs/BROKER.md), and [isolated verification](docs/TESTING.md).
 
 Operator runs `sudo scripts/install.sh` only from an immutable, reviewed source export. Prefer exporting the reviewed commit as leo into an archive, extracting it into a new root-owned directory, and executing that root-owned installer; never install an evolving checkout. Device provisioning uses the isolated installed-code invocation in `docs/VAULT-API.md`, never root Python from a user-owned cwd. Token goes to a new 0600 file, never stdout. Install does not provision real devices, add command targets, activate Hermes configuration, or restart the gateway. An empty templates list refuses all use. Explicitly approve root-trusted target templates before use. No thedoorpc commands ship or run.
+
+First device provisioning must set the correct numeric **owner user** ID with `--telegram-owner-id`; missing policy or non-owner/group/unbound contexts make every plugin operation refuse. This ID is not the bot's numeric ID. Do not activate the plugin before that gate or treat the gateway's multi-user allowlist as vault authorization.
 
 Tests use fake canaries and temporary dirs. Run `python3 -m pytest -q` in an isolated sandbox; no real hosts or real credentials. Installation/live validation are separate owner gates; no claim of deployed availability from unit tests.
 

@@ -3,8 +3,8 @@ version: "1.0.0"
 description: >
   LBS password vault tools. List stored handles, ask Leo for a secret through
   Rubric's masked native field, check a request, and run a root-approved command
-  template that receives the secret on protected stdin. The model never sees,
-  passes, or retrieves a secret value.
+  template that receives the secret on protected stdin. Vault tool results do
+  not export plaintext. Root terminal access is not isolated; owner-only gateway required.
 author: LBS
 license: MIT
 tags: [security, secrets, vault]

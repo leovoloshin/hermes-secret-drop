@@ -110,6 +110,60 @@ fi
 
 STAGE=$(mktemp -d /tmp/lbs-vault-install.XXXXXX)
 trap 'rm -rf -- "$STAGE"' EXIT
+TARGET=http://127.0.0.1:$PORT
+serve_check() { # MODE BEFORE_JSON [AFTER_JSON]
+	"$PY" -I - "$@" "$HOST" "$SERVE_PATH" "$TARGET" <<'PYEOF'
+import json, sys
+mode, before_path = sys.argv[1], sys.argv[2]
+after_path = sys.argv[3] if mode == "verify" else None
+host, path, target = sys.argv[-3:]
+hp = host + ":443"
+def load(p):
+    with open(p) as f:
+        return json.load(f)
+def handler(cfg):
+    h = ((cfg.get("Web") or {}).get(hp) or {}).get("Handlers") or {}
+    return {k: v for k, v in h.items() if k.rstrip("/") == path}
+def without(cfg):
+    cfg = json.loads(json.dumps(cfg))
+    h = ((cfg.get("Web") or {}).get(hp) or {}).get("Handlers")
+    if h is not None:
+        for k in list(h):
+            if k.rstrip("/") == path:
+                del h[k]
+    return cfg
+def ours(h):
+    if len(h) != 1:
+        return False
+    (v,) = h.values()
+    return (v.get("Proxy") or "").rstrip("/") == target and set(v) == {"Proxy"}
+before = load(before_path)
+if hp in (before.get("AllowFunnel") or {}) and before["AllowFunnel"][hp]:
+    sys.exit(f"funnel is enabled on {hp}; refusing to publish the vault there")
+if mode == "plan":
+    h = handler(before)
+    if not h:
+        print("add")
+    elif ours(h):
+        print("same")
+    else:
+        sys.exit(f"{path} already served by something else: {json.dumps(h)}")
+else:
+    after = load(after_path)
+    if not ours(handler(after)):
+        sys.exit(f"{path} not mapped to {target} after change")
+    if without(before) != without(after):
+        sys.exit("serve config changed outside " + path + "; compare backup with `tailscale serve status --json`")
+    if (after.get("AllowFunnel") or {}) != (before.get("AllowFunnel") or {}):
+        sys.exit("funnel settings changed unexpectedly")
+    print("verified")
+PYEOF
+}
+# Reject foreign/stale routes before installing code or changing running units,
+# including --no-serve: an old unprivileged backend must never be left squattable.
+tailscale serve status --json >"$STAGE/serve-preflight.json"
+serve_check plan "$STAGE/serve-preflight.json" >/dev/null \
+	|| die "foreign or unsafe vault Serve route; review/remove it explicitly before this clean cutover"
 BACKUP_DIR=""
 backup_dir() {
 	if [[ -z $BACKUP_DIR ]]; then
@@ -355,55 +409,6 @@ else
 fi
 
 # ---- 6. tailscale serve /lbs-vault (backup first; other paths untouched) -------
-TARGET=http://127.0.0.1:$PORT
-serve_check() { # MODE BEFORE_JSON [AFTER_JSON]
-	"$PY" -I - "$@" "$HOST" "$SERVE_PATH" "$TARGET" <<'PYEOF'
-import json, sys
-mode, before_path = sys.argv[1], sys.argv[2]
-after_path = sys.argv[3] if mode == "verify" else None
-host, path, target = sys.argv[-3:]
-hp = host + ":443"
-def load(p):
-    with open(p) as f:
-        return json.load(f)
-def handler(cfg):
-    h = ((cfg.get("Web") or {}).get(hp) or {}).get("Handlers") or {}
-    return {k: v for k, v in h.items() if k.rstrip("/") == path}
-def without(cfg):
-    cfg = json.loads(json.dumps(cfg))
-    h = ((cfg.get("Web") or {}).get(hp) or {}).get("Handlers")
-    if h is not None:
-        for k in list(h):
-            if k.rstrip("/") == path:
-                del h[k]
-    return cfg
-def ours(h):
-    if len(h) != 1:
-        return False
-    (v,) = h.values()
-    return (v.get("Proxy") or "").rstrip("/") == target and set(v) == {"Proxy"}
-before = load(before_path)
-if hp in (before.get("AllowFunnel") or {}) and before["AllowFunnel"][hp]:
-    sys.exit(f"funnel is enabled on {hp}; refusing to publish the vault there")
-if mode == "plan":
-    h = handler(before)
-    if not h:
-        print("add")
-    elif ours(h):
-        print("same")
-    else:
-        sys.exit(f"{path} already served by something else: {json.dumps(h)}")
-else:
-    after = load(after_path)
-    if not ours(handler(after)):
-        sys.exit(f"{path} not mapped to {target} after change")
-    if without(before) != without(after):
-        sys.exit("serve config changed outside " + path + "; compare backup with `tailscale serve status --json`")
-    if (after.get("AllowFunnel") or {}) != (before.get("AllowFunnel") or {}):
-        sys.exit("funnel settings changed unexpectedly")
-    print("verified")
-PYEOF
-}
 if [[ $SERVE == 1 ]]; then
 	dns=$(tailscale status --json | "$PY" -I -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
 	[[ $dns == "$HOST" ]] || die "tailscale DNS name is $dns, expected $HOST"
@@ -442,3 +447,4 @@ say "Hermes gateway: NOT touched. The agent plugin is staged at $PLUGIN_DIR but 
 say "Activation owed (Leo): hermes plugins enable lbs-vault, then /restart the gateway."
 say "Served URL: https://$HOST$SERVE_PATH/  (expect: curl -s -o /dev/null -w '%{http_code}' https://$HOST$SERVE_PATH/requests/x -> 401)"
 say "LBS-VAULT-RESTART-NEEDED"
+say "Owner binding gate: provision the first device with --telegram-owner-id <Leo numeric user id>. Until principals.json is configured, every plugin tool refuses. Gateway's general allowlist is not vault authorization."

@@ -69,11 +69,11 @@ directory with the same properties. Keep it `0600 root:root`.
 |---|---|
 | `id` | `^[a-z0-9][a-z0-9._-]{1,63}$`, unique |
 | `handle` | the one handle this template may use (same regex); a `use` naming another handle is `403 handle_mismatch` |
-| `argv` | 1–64 fixed strings; `argv[0]` a normalized absolute path. Shells and interpreter launchers (`sh`, `bash`, `dash`, `zsh`, `ksh`, `fish`, `csh`, `busybox`, `env`, `xargs`, `python*`, `perl*`, `ruby*`, `node`, `php*`, `lua*`, …) are refused. Nothing is substituted into argv. |
+| `argv` | 1–64 fixed strings; `argv[0]` a normalized absolute path. Executable and lexical/canonical parents must be root/broker-owned and not group/other-writable (root-owned sticky ancestors protect owned children). Canonical executable is used, preventing symlink retargeting. Shells/interpreter launchers are refused; nothing is substituted. |
 | `description` | optional, ≤ 200 chars, shown to the agent |
 | `timeout_s` | optional, 1–300, default 60 |
 | `max_output_bytes` | optional, 1–262144, default 65536 |
-| `cwd` | optional absolute root-trusted directory; default root's home (or `/`) |
+| `cwd` | optional absolute root-trusted directory, checked like executable parents; default root's home (or `/`) |
 | `env` | optional fixed `KEY: value` map (≤ 32 entries). `LD_*`, `PYTHON*`, `PERL*`, `RUBY*`, `NODE_*`, `BASH_*`, `GCONV_*`, `IFS`, `ENV`, `BASH_ENV`, `DISPLAY`, `SSH_ASKPASS`, `SUDO_ASKPASS` are refused. Never put a secret here. |
 | `stdin_newline` | optional bool, default true: append `\n` after the value |
 
@@ -204,3 +204,7 @@ files but does not edit `plugins.enabled` or restart the gateway.
   template.
 * The broker trusts the `owner` field because only root can reach its socket;
   the service fills it from its root-owned configuration, never from the agent.
+
+## Gateway owner binding
+
+Before plugin activation, first device provisioning must set `--telegram-owner-id` to Leo's verified numeric user ID. The plugin reads private `principals.json` and task-local gateway sender ContextVars; only that owner's direct Telegram chat may use any vault tool. Groups/channels, other allowed bot users, cron, API/CLI, missing context/policy, loose file permissions or a changed Hermes context API all fail closed. The general gateway allowlist is not vault authorization. See `VAULT-API.md` for exact schema and isolated provisioning command. Root terminal/code tools still bypass this plugin-level boundary and must be trusted or separately confined.
