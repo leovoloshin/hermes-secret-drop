@@ -24,3 +24,20 @@ The tests exercise fake owner/device principals and fake stdin targets. They mus
 ## Owner-gated live probe
 
 Only after LBS reviews/runs `scripts/install.sh` and authorizes live probes: provision a dedicated fake-canary device, create a local request, submit a generated `CANARY-<random>` over the real served URL using a protected file/HTTP header (never a URL token or command argument containing the value), use a local fake target, and verify metadata-only results. Write the canary into a new 0600 file at an explicitly agreed owner-readable private path; LBS may then grep **only that canary** in `/root/.hermes/state.db`. Do not dump message contents, read unrelated rows, or search for historical secrets. Record unauthenticated served `curl -w '%{http_code}'` result (must be 401), save status, broker exit/redacted output, and canary-negative leak scans. Delete dedicated fake fixture/device/target through reviewed operator steps; no real saved secrets are involved.
+
+## Installed-service live verification — probe 20261031-200f6a5bf966
+
+Authorization: `work/LBS-INSTALL-DONE.md`. LBS reports root installation completed with 13 changes, both vault units active, plugin staged/not enabled, gateway untouched, and the tailnet Serve path installed without changing other paths/Funnel.
+
+Builder-observed first matrix (bounded `curl --max-time 10`, body suppressed, status codes only):
+
+| Request | Observed HTTP |
+|---|---:|
+| Served GET `/lbs-vault/requests/x`, unauthenticated | 401 |
+| Served malformed JSON POST, unauthenticated | 401 |
+| Served GET with client-supplied `Tailscale-Funnel-Request: ?1`, unauthenticated | 401 |
+| Loopback GET with `Tailscale-Funnel-Request: ?1`, unauthenticated | 403 |
+
+Authentication precedes body parsing. The served client marker is stripped by the proxy; the direct-backend marker is refused. This is not actual Funnel traffic, does not enable Funnel, and does not close the audit's Funnel-marker deployment caveat.
+
+**Status: awaiting LBS root fixture setup, not complete.** Authenticated malformed/oversized requests, canary save/use, and root-only absence scans have not run. Exact setup commands: `work/ROOT-STEPS.md`; progress: `work/VERIFY.md`. The disposable device uses an isolated fake owner, not Leo's real device or Telegram principal mapping. Canary and bearer artifacts stay in an ignored private probe directory; no values are in these notes.
