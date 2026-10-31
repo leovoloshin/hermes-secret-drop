@@ -1,0 +1,30 @@
+# LBS vault API
+
+Base: `https://spark-dd6e.tail4b7569.ts.net/lbs-vault/`. Root HTTP service binds only `127.0.0.1:8765` (configurable `LBS_VAULT_PORT`); Tailscale Serve terminates HTTPS, strips `/lbs-vault/` before proxying. Service accepts both stripped and full paths. No public request creation or broker execution.
+
+## Device provisioning (native-owner contract)
+
+Each device gets an independent 256-bit random bearer, never shared with canvas authentication. Root operator runs `python3 -m lbs_vault.provision --device rubric-mac --owner leo --output /root/private/rubric-mac.token` (parent private directory must already exist). Output is a new 0600 file; stdout contains metadata only. Root config stores SHA-256 digest, owner, ID, expiry; revoke by removing device entry and restarting vault service (not gateway). Transfer the file by authenticated SSH/SFTP, never Telegram/chat/URLs. Mac handoff filename `lbs_vault_token`, placed 0600 in `~/Library/Application Support/TGLens/tdata/` (or existing `/Applications/tdata/` portable data root). Rubric owners must import once into Keychain generic password service `app.rubric.lbs-vault`, account device ID; use existing bundle/keychain access groups, device-only accessibility, remove handoff after successful readback. iOS: same filename through supervised developer device-file provisioning into the app's existing sandbox Application Support/TGLens/tdata; import into the same service/account in existing app Keychain group with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, then delete handoff. Do not alter app IDs, groups, sessions, or network allowlists. This repo implements server provisioning, not native import; Rubric owners implement that contract. No claim that existing canvas code already imports this new credential. Existing canvas prior art uses `tglens_canvas_token` under tdata; never reuse it.
+
+All client calls require `Authorization: Bearer <device token>`. No cookies, URL credentials, query tokens or redirects. Native ephemeral URLSession, no body logging/analytics, no webview. Content-Type application/json for POST. Responses always JSON, `Cache-Control: no-store`, no CORS grants. No Origin accepted (native); if present must exactly equal `https://spark-dd6e.tail4b7569.ts.net`. Host must exactly equal that hostname or loopback host/port. Wrong Host/Origin: 403. Every request including unauthenticated attempts rate limited per source, with additional per-device limits; 429 on excess. Request bodies capped at 16384 bytes, value UTF-8 1..8192 bytes; no CR/LF/NUL. Strict handle `^[a-z0-9][a-z0-9._-]{1,63}$`; purpose 1..256 characters, username optional <=256. Reject extra fields and malformed JSON/types with 400; body excess 413. Token digests compared constant-time.
+
+## Agent transport
+
+Root-owned Unix socket `/run/lbs-vault/agent.sock`, 0600 inside 0700 directory. Only gateway root can connect; never exposed by Serve. Newline-delimited JSON max 16384 bytes; operations list/request/status/use, fixed configured owner `leo`. No plaintext read/get. `request` takes handle, purpose, optional TTL seconds (1..600), returns `{id,handle,purpose,expires_at,status:"pending",link:"tglens://vault?req=<id>"}`. Equivalent agent-only operation `POST /lbs-vault/requests` is deliberately refused on HTTP, including loopback: 403; local creation uses socket `{"op":"request","handle":"example.sudo","purpose":"approved maintenance"}`. Separate socket avoids trusting proxy loopback address for agent authority.
+
+## Client routes
+
+* `GET /lbs-vault/requests/<id>` → 200 `{handle,purpose,status}` only. ID is opaque 256-bit random, owner-bound. Unknown/wrong-owner ID: 404. Pending expires <=600 seconds after creation. Status values pending/saved/cancelled/expired. GET has no mutation except computing expiry.
+* `POST /lbs-vault/secrets`: `{request_id?,handle,purpose,username?,value}` → 200 `{saved:handle}`. Without request_id, authenticated owner device may save proactively. With request_id, handle AND purpose must exactly match, owner must match, request must be pending. Atomic encrypted transaction both saves and marks consumed. No value echoes, exception detail, or request-body logging.
+* `POST /lbs-vault/requests/<id>/cancel`, body `{}` → 200 `{status:"cancelled"}`. Consumes pending request without save. Unknown/wrong owner 404. Already cancelled/saved 409; expired 410.
+* Public `POST /lbs-vault/requests`: 403 (use agent socket).
+
+Missing/wrong/revoked/expired device bearer: 401, generic `unauthorized`. Request replay or cancelled request: 409; request TTL timeout: 410; wrong handle/purpose: 400; malformed IDs: 404; unknown route 404; unsupported method 405. Error object `{error:<stable code>}` contains no submitted data. Device token is not single-use (revocable provisioning credential); request ID is single-use and never authorization by itself.
+
+## Telegram secure action
+
+Bot numeric user ID **8421530159**, extracted from the numeric prefix of gateway `TELEGRAM_BOT_TOKEN` without exposing its credential suffix. Expected bot @Lbs215_bot; numeric ID, not username, is the rendering allowlist. Message text may contain `Give LBS a Secret: tglens://vault?req=<id>` or label `[ 🔐 Give LBS a Secret ]` pointing at exactly that URI. No messages are sent by this service or this builder. Native clients render bot-driven secure actions only for this numeric sender; validate scheme/host `tglens://vault`, exactly one `req` parameter and 43-character URL-safe ID; reject all other parameters. Re-fetch authenticated metadata before showing prompt. Do not trust handle/purpose from link or chat. Proactive composer action requires no bot message.
+
+## Scope
+
+Website credentials remain with Hermes origin-bound `browser_vault`. This API never fills pages and cannot downgrade browser origin checks. Broker use is socket-only, fixed root-approved target template and handle binding, no arbitrary shell commands, stdin-only secret transport, redacted output. Root/admin or compromised root Hermes is outside this privilege boundary.
