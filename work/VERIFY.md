@@ -281,3 +281,58 @@ and dead-code removal in a new freeze. The 142 full audit does not approve that
 future code; it will receive separately scoped independent T1/T2 review.
 Rollback minimum policy, existing dumps, keys/groups, CI permissions and account
 data are not being changed.
+
+### Native owner restoration and final source checkpoint
+
+Both original saved sessions were resumed in their existing panes (`w24:p2`
+and `w1Z:p2`) with their original Gemini 4 Argon model. No reset, clean,
+working-tree replacement or model override was used. A subsequent desktop
+SIGTERM was handled by checking that only bash remained, then restoring that
+same saved session again.
+
+iOS remains frozen at build 100029, compiled source
+`dc9ef2a9bb49bb0fa76efceff9f51a99d2255482`; its independently reviewed source
+and six inspected UIKit fixture images do not establish phone installation,
+real OS keyboard behavior, positive window presentation or live authentication.
+Its credential-bearing staged archive remains private; no Canvas credential
+contents were read or printed.
+
+Desktop final compiled build 146 is
+`eec5dedd464d2cfc7628a9362fc889fd2f076a10`, archive SHA-256
+`73eddbe908ffc37c253e812a5b9cb26ed35d017a9dc4fef323ea591f43f314d5`.
+Script/test-only successor `8d50400fcb048e9f1138407174860b1313283961`
+and report-only `08d9b2be546d5087abefb0c6aa60c8260902c82a` are pushed.
+The compiled artifact was not rewritten for the script-only closure.
+
+Independent focused reviews, preserved separately as runs 7 through 11 under
+`/home/leo/security-audit-skill/tglens/`, closed the bounded cutover criteria:
+chat-only/context-bound entry, strict request query, source crash-off enforcement,
+DER gates, truthful foreground publish status, staged-input binding, canonical
+publisher path and actual nested-code checks, stream-consuming producer checks,
+and explicit non-destructive branch-restoration failure reporting.
+Normal URL scheme/host case-insensitivity is intentionally retained.
+The final tiny review covers criterion A only; it is not a new full audit.
+Parent validators passed its **0 findings / 61 coverage units**. The earlier
+full audit's three trust leads remain unresolved and unaccepted.
+
+Owner-reported actual build-146 checks: hooks 31 files/54 markers; invariant
+3/3, MCP 18/18, updater 7/7 and offscreen UI 4/4 suites passed. A dummy-transport
+signer-to-publisher smoke produced a fixture ZIP/appcast and PUBLISHED status;
+the real staged-archive pre-SSH gate instead returned 75/WAITING_LBM.
+The script-only closure reran hooks and seven updater suites, including scratch
+repository clean-restore and dirty/index-lock RESTORE_FAILED cases. Owner Tier 1
+review returned no findings. Parent source audits executed no target scripts.
+Fixture screenshots are offscreen rendering, not new WindowServer captures.
+
+Remaining functional notes from the final review: signal traps do not themselves
+exit, RESTORE_FAILED replaces the preceding failure reason, and a tag named main
+can cause a false restoration failure. No success-path restoration-failure test
+was exercised. Rollback's explicit direct-install policy was not changed.
+
+**Still blocked:** LBS's reviewed code-only root update in `ROOT-STEPS.md`;
+signed Mac/phone installation and owner trust decisions; real chat click-to-open,
+Cocoa/physical focus and Keychain behavior; real phone keyboard and authenticated
+native save/cancel proof. Mac OS screen capture was denied and no permission
+settings were changed. No fresh typed live fixture was provisioned prematurely.
+Plugin enablement, gateway restart, principals and Serve/Funnel remain untouched.
+Neither native end-to-end completion nor global vault completion is claimed.
