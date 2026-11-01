@@ -329,10 +329,34 @@ exit, RESTORE_FAILED replaces the preceding failure reason, and a tag named main
 can cause a false restoration failure. No success-path restoration-failure test
 was exercised. Rollback's explicit direct-install policy was not changed.
 
-**Still blocked:** LBS's reviewed code-only root update in `ROOT-STEPS.md`;
-signed Mac/phone installation and owner trust decisions; real chat click-to-open,
-Cocoa/physical focus and Keychain behavior; real phone keyboard and authenticated
-native save/cancel proof. Mac OS screen capture was denied and no permission
-settings were changed. No fresh typed live fixture was provisioned prematurely.
+**Still blocked:** signed Mac/phone installation and owner trust decisions;
+real chat click-to-open, Cocoa/physical focus and Keychain behavior; real phone
+keyboard and authenticated native save/cancel proof. Mac OS screen capture was
+denied and no permission settings were changed. No fresh typed live fixture was
+provisioned prematurely. The code-only root update is now complete, as below.
 Plugin enablement, gateway restart, principals and Serve/Funnel remain untouched.
 Neither native end-to-end completion nor global vault completion is claimed.
+
+### Kind-cutover root receipt accepted
+
+LBS reviewed and executed the frozen `work/ROOT-STEPS.md` block after verifying
+the archive digest and commit. Parent read the metadata-only receipt at
+`work/live-probe-kind-update/root-update.json`; it reports `status=passed`,
+`stage=complete`, source commit
+`88e6a783887b8d3d22c4aabd61bb408dc0a63551`, and
+`installed_code_matches=true`. LBS emitted
+`LBS-VAULT-KINDS-ROOT-UPDATE-COMPLETE`.
+
+The receipt confirms both vault units restarted, unauthenticated local and served
+requests returned 401, and gateway, protected metadata and Serve/Funnel remained
+unchanged. LBS reports both units active and the receipt leo-owned mode 0600.
+No plugin enablement, device provisioning or request creation was attempted.
+This establishes the reviewed secret/login API implementation is deployed live;
+it does not constitute a new authenticated native kind/save/cancel probe.
+
+The API readiness handoff is `VAULT-API-KINDS-READY`: required request kinds
+`secret|login`, request-bound saves only, encrypted login pair under one handle.
+Native builders are notified through their original owner panes. Their Mac/phone,
+trust-decision and actual native visual/authentication gates remain BLOCKED.
+No bearer or canary values were read or printed; no gateway/plugin/principals/
+Serve changes were made by this receipt-recording step.
