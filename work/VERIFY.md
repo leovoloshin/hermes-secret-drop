@@ -84,9 +84,13 @@ Owner reports on-demand freeze `1c564ca950` and build `7.3.4-tglens.135`,
 with 4/4 local-mock UI tests in 23.73s and existing hook/security suites green.
 Parent inspected five `macos_135_vault_*` PNGs: secret and login field counts,
 masking, read-only context, adjacent buttons, saved confirmation and chat Saved
-state are readable. Owner identifies these as studio1 WindowServer captures
-against a local mock vault—not authenticated Spark or Leo's running app.
-Capture/build provenance metadata was requested; no publication was authorized.
+state are readable. The later producer report
+`/home/leo/tglens/artifacts/release-report-135.md` identifies `window()->grab()`,
+so these are **Qt widget captures from a macOS QA process**, not OS WindowServer
+screenshots or proof of physical visibility/focus/modality. The server is a local
+mock, not authenticated Spark. No publication was authorized. The report's old
+`--owner leo`/predictable-tmp live recipe was rejected; fake-owner fixtures must
+come only from a later reviewed Spark ROOT-STEPS block, never native ad-hoc setup.
 
 The new full T3 run-5 caught a functional fail-closed blocker: the production
 signer gate compares `5KQRTTL9DS`, but recorded actual signatures use
@@ -117,3 +121,74 @@ parse passed; **the builder did not execute the root block**. Root-owned data,
 templates and config are checked by the block before changes, not presumed safe.
 LBS must review/run it and return metadata-only `root-update.json`; no fake
 credentials or ten-minute native requests are created in this deployment step.
+
+### iOS audit and artifact metadata follow-through
+
+Parent challenged the original rejection reasoning: absent push entitlements do
+not rule out local notifications. Run-5 reopened for a narrow unit; a fresh
+hunter and independent re-verifiers traced the one main-app producer (incoming
+calls, no URL) and the URL-producing extension (not shipped). Both rejections
+stand with corrected evidence. Parent then ran validators: **2 records / 32 units
+valid** (19 covered, 2 candidate linked to rejected records, 2 blocked, 9 OOS).
+The final signed/installed metadata and legacy-notification/platform facts remain
+unobserved; the first closure was not used to conceal the coverage gap.
+
+Parent independently streamed only `Telegram.app/Info.plist` inside offline
+Docker after the ordinary archive reader hit its 64 MiB per-member limit.
+Bundle ID and build match, URL schemes are exactly telegram/tg/tonsite/ton/tc,
+with no tglens/rubric scheme; plist SHA-256:
+`461cab539dc7bf2d51f379dd45d6b625eba16ef0cd8e8ddb9ccf22ed7cf405d9`.
+Actual staged tar SHA-256 matches the owner's
+`2d0e8369807e85def2f6f057304197532b8e8b6760947973632d478d9ce4cdbb`.
+The auditor's read-only Apple metadata check confirms the same staged bundle has
+no associated-domains or aps-environment; it is ad-hoc signed, not the final
+lbm/phone signature. No app code was executed for these metadata checks, and the
+throwaway reader was removed. Final signed/installed metadata remains unobserved.
+
+Build 100028 fixes the false cancel/timeout confirmations and denies unattested
+OS/notification vault entry. Owner freeze:
+`dd95bd5a78f3a70a331d7b59730854a661764cc6`, studio1
+`591717368ed8089656f95953a92b9426e413048f`; private artifact SHA-256
+`72e7cacc86c1c1afe33df90f67f45bd9e75f47a913d1d78e4bf4017c2fc3a4ca`.
+Independent source/identity review in `tglens-ios/delta-100028/` confirmed the
+entry deny and one-GET/no-re-POST behavior, but found a test-only production
+windowless branch, save-409 reconciliation gap and a narrow sync-result race.
+Owner is removing those and moving UI work to existing async APIs in 100029.
+Unsupported CLI positive presentation remains blocked, not a fabricated passing
+test. Source-only run-5 stays bound to 68c2b5e; neither review covers a future SHA.
+
+### Artifact privacy boundary
+
+Name/source inspection confirms the private 100027/100028 iOS bundles contain
+`Telegram.app/tglens_canvas_token`, copied by the existing Canvas pipeline.
+This is the Canvas relay credential, **not** the Vault bearer; no token contents
+were read or printed. It is separate from the vault's per-device Keychain import.
+The existing design remains an explicitly out-of-scope Canvas/supply-chain
+release fact, not a claim that every secret in the app is safe. Artifacts must
+remain private 0600 inside 0700, never Git/public uploads. The builder did not
+change, rotate or remove that credential or authorize broader distribution.
+
+### Desktop follow-through
+
+Build 136 fixes the Team ID guard and misleading memory-clearing copy. Its
+source freeze is 83fb1a6802 (compiled code 0a9079742e); staged archive SHA-256 is
+`be2e763d867be92a9d713829300c8056b8d3ef85d32e563aa35cacd6c744b8fd`.
+Parent inspected the corrected Saved capture. Report:
+`/home/leo/tglens/artifacts/release-report-136.md`.
+Actual OS capture is blocked: `CGPreflightScreenCaptureAccess()==0`, screencapture
+exit 1, “could not create image from display”; no TCC/security settings changed.
+The Qt widget captures prove layout only. UI suite: owner-observed **4/4 in
+28.059s**, with the existing 3/18/6 invariant/security suites and hooks green.
+
+The desktop audit's independently traced functional blockers are being fixed:
+fresh verified full-bundle signing provenance (pinned digest/commit, no stale
+installed-app seed or mutable-worktree entitlements), passcode-lock local
+teardown/no server cancel plus submit/raise/event gates, and native peek teardown
+and refusal while the vault is open. Minimal helper-signature and process
+core-dump guards, plus metadata-only token-presence caching, are also in scope.
+OS exploitability remains needs-validation, not a fabricated confirmed finding.
+Older signed-build Keychain trust and private signing-key ACL facts require
+Leo's decision; no key/group/credential changes or real probes are authorized.
+
+LBS root-update receipt `work/live-probe-kind-update/root-update.json` was checked
+and is absent. The reviewed a6782de root handoff remains unexecuted by the builder.
