@@ -240,3 +240,44 @@ policy before a fresh integration build/freeze. Run-6 is completing only its
 138 snapshot while awaiting that legitimate final handoff; it does not approve
 uncommitted work. The iOS owner keeps source dc9ef2a / reviewed 100029 frozen,
 with actual phone/OS/live-auth prerequisites still blocked.
+
+### Final full desktop audit at 142
+
+The restored owner froze build 142 code
+`5804bb33fcdb5287eb0344f28668f3162e891f67`; artifact/report-only commit
+`f9b65465f397ba226d38b925afa8559b1be4e942` leaves that code unchanged.
+Write-once staged archive SHA-256:
+`b398a85ad2020c422b302520c2ec48a0602ea1b164349ddc3c4149491700e8b1`.
+The independent audit checked the commit-before-stage chain, matching metadata,
+no Helpers/crashpad members and both automatic-update keys false.
+
+Run-6 completed at exactly that source, preserving 138/141 snapshots. Parent
+validators passed: **3 findings valid / 60 coverage units valid**. Result:
+0 confirmed, 3 needs-validation trust leads; 46 covered, 3 linked to those leads,
+1 blocked Linux-runner unit and 10 out of scope. The remaining facts are the
+lbm signing-key access/partition policy, legacy Keychain trust of other same-team
+builds (recorded 105 and 111–131), and self-hosted CI runner host/account/group
+and write/dispatch principals. These were not probed or accepted on Leo's behalf.
+
+142 uses an actual top-level application-modal dialog and authoritative
+QGuiApplication focus-window gating. Involuntary focus loss keeps a wiped,
+disarmed modal until deliberate dismissal; root external-UI/control routes are
+blocked while armed or paused. App-owned crash reports are compiled out by the
+pipeline. Parent inspected the explicit paused-state layout artifact
+`desktop_142_vault_paused.png`: no credential fields, clear explanation and visible
+pointer Dismiss. It is Linux offscreen/local-mock rendering only—not Cocoa,
+physical activation, real Keychain or authenticated live proof.
+
+The report discloses a five-minute three-hunter overlap, an early source probe
+file and /dev/shm copy that were removed, and truncated replies recovered from
+validated scratch copies. No flawless-process or exhaustive-security claim is made.
+
+The final notes exposed bounded contract/cutover gaps: a second agent-peek entry,
+over-broad vault host/request matching and session selection, a vacuous
+click-exclusion test, and legacy producer/promoter paths that bypass current
+validation or can report READY after signing failure. The original owner is
+finishing those, source-level crash-off enforcement, standard DER generation
+and dead-code removal in a new freeze. The 142 full audit does not approve that
+future code; it will receive separately scoped independent T1/T2 review.
+Rollback minimum policy, existing dumps, keys/groups, CI permissions and account
+data are not being changed.
