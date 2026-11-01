@@ -153,13 +153,29 @@ OS/notification vault entry. Owner freeze:
 Independent source/identity review in `tglens-ios/delta-100028/` confirmed the
 entry deny and one-GET/no-re-POST behavior, but found a test-only production
 windowless branch, save-409 reconciliation gap and a narrow sync-result race.
-Owner is removing those and moving UI work to existing async APIs in 100029.
-Unsupported CLI positive presentation remains blocked, not a fabricated passing
-test. Source-only run-5 stays bound to 68c2b5e; neither review covers a future SHA.
+Those fixes passed independent read-only review at 100029 source
+`dc9ef2a9bb49bb0fa76efceff9f51a99d2255482`, studio1
+`a0596d183f80d0f683a1c6ed79fe699981af9edb`: plain windowless return, save-409
+single-GET reconciliation, atomic result/winner publication and non-blocking
+async sheet UI with closed/generation guards. Review:
+`/home/leo/security-audit-skill/tglens-ios/delta-100029/`.
+100029 artifact SHA-256:
+`f8835de84f211ccf602b6314cb27bee8dc42413073f48ac9e036ac3791788be8`.
+Old 100027/100028 artifact hashes remain unchanged. The owner reports all nine
+test phases and 47-file/113-marker hooks passing; independent review executed
+no app or test and does not claim positive real-UIWindow presentation.
+
+Artifact/doc-only commit `ef046cc493e63c7df765ccf97d000a8581acbbfd` adds six
+fresh 1320×2868 fixtures tagged 100029 without changing source. Parent inspected
+all six: both kinds, Give it here/Saved, confirmed-200 cancellation and an
+unconfirmed-503 cancellation with both fields cleared and no false no-save claim.
+The main unknown outcome is readable; its trailing diagnostic is ellipsized.
+These remain offscreen UIKit/URLProtocol/simulated-keyboard layout evidence,
+not phone, OS keyboard, positive UIWindow or live authenticated proof.
 
 ### Artifact privacy boundary
 
-Name/source inspection confirms the private 100027/100028 iOS bundles contain
+Name/source inspection confirms the private 100027/100028/100029 iOS bundles contain
 `Telegram.app/tglens_canvas_token`, copied by the existing Canvas pipeline.
 This is the Canvas relay credential, **not** the Vault bearer; no token contents
 were read or printed. It is separate from the vault's per-device Keychain import.
@@ -180,15 +196,47 @@ exit 1, “could not create image from display”; no TCC/security settings chan
 The Qt widget captures prove layout only. UI suite: owner-observed **4/4 in
 28.059s**, with the existing 3/18/6 invariant/security suites and hooks green.
 
-The desktop audit's independently traced functional blockers are being fixed:
-fresh verified full-bundle signing provenance (pinned digest/commit, no stale
-installed-app seed or mutable-worktree entitlements), passcode-lock local
-teardown/no server cancel plus submit/raise/event gates, and native peek teardown
-and refusal while the vault is open. Minimal helper-signature and process
-core-dump guards, plus metadata-only token-presence caching, are also in scope.
+The desktop audit's independently traced functional blockers were integrated
+in build 138 source `d4443f31baa12be764051c4c06e276c265c25d66`: fresh full-bundle
+signing provenance, pinned digest/commit/entitlements, no active-app overwrite,
+passcode-lock local teardown/no server cancel plus all-layout submit/raise/event
+gates, native peek teardown/refusal, helper signature validation, process core
+limit and metadata-only tri-state token presence. Source report:
+`/home/leo/tglens/artifacts/release-report-138.md`. Staged archive SHA-256:
+`6fec374b538f9423bee7de928c34fca776b0f341d255ed470f18344afefdbbae`.
+Owner-observed gates: 29 files/45 hooks, invariants 3/3, MCP 18/18, updater 7/7
+(six actual-script negative cases), UI 4/4 in 32.494s Linux / 22.77s macOS.
+These are reported functional results, not a parent attestation of native sandboxing.
+
+Run-5 is frozen at build 136: **9 findings valid / 38 units valid**, parent
+validators passed; 0 confirmed, 7 needs-validation and 2 rejected. New full
+scoped run-6 is reviewing the actual 138 source/artifact, including all changed
+boundaries and retained platform facts. No current-source T3 approval or macOS
+publication is claimed while it is in progress.
 OS exploitability remains needs-validation, not a fabricated confirmed finding.
 Older signed-build Keychain trust and private signing-key ACL facts require
 Leo's decision; no key/group/credential changes or real probes are authorized.
 
 LBS root-update receipt `work/live-probe-kind-update/root-update.json` was checked
 and is absent. The reviewed a6782de root handoff remains unexecuted by the builder.
+
+### Original owner restoration
+
+After the mass OMP exit, neither native owner was in the agent registry, but
+both original panes remained at their bash prompts. LBS explicitly authorized
+restoring both saved sessions, with original models and working trees preserved.
+Parent used `herdr agent start --kind omp --restore <exact saved session>` in
+the existing `w1Z:p2` and `w24:p2` panes. Both reached interactive readiness;
+their session IDs are unchanged and both live status bars show Gemini 4 Argon.
+No model override, new owner, reset, clean, checkout, stash or native file edit
+was performed by the parent. Unrelated MCP startup auth failures were not acted on.
+
+Desktop HEAD at recovery was `ead02fa0705e3e202600197d5d7517c999e06dc1`
+(build-138 code-equivalent artifact/doc commit), with no 139+ handoff. The
+interrupted working tree is retained. The restored owner is finishing the
+validated main-chat FullMsgId route, existing crash-reports-disable policy,
+truthful immutable compiled-source metadata and SDK-correct signing/manual-update
+policy before a fresh integration build/freeze. Run-6 is completing only its
+138 snapshot while awaiting that legitimate final handoff; it does not approve
+uncommitted work. The iOS owner keeps source dc9ef2a / reviewed 100029 frozen,
+with actual phone/OS/live-auth prerequisites still blocked.
