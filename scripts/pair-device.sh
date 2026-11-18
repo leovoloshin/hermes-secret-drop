@@ -37,7 +37,9 @@ for p in "$LIB" "$LIB/lbs_vault" "$LIB/lbs_vault/__init__.py" "$LIB/lbs_vault/pr
 done
 [[ -f $DIR/principals.json ]] || die "principals.json missing: set the owner Telegram ID first"
 
-install -d -m 0700 -o root -g root /root/private "$PRIVATE"
+[[ -d /root/private ]] || install -d -m 0700 -o root -g root /root/private
+[[ -d $PRIVATE ]] || install -d -m 0700 -o root -g root "$PRIVATE"
+[[ ! -L $PRIVATE && $(stat -c '%u %a' -- "$PRIVATE") == "0 700" ]] || die "unsafe $PRIVATE"
 OUT=$PRIVATE/$DEVICE.token
 [[ ! -e $OUT ]] || die "$OUT exists; a previous pairing did not finish. Inspect, shred, revoke before retrying"
 
@@ -51,17 +53,12 @@ runuser -u "$STAGE_USER" -- /bin/bash --noprofile --norc -c '
 	[[ ! -e $d || ( -d $d && ! -L $d && -O $d && $(stat -c %a -- "$d") == 700 ) ]] || { echo "unsafe staging dir $d" >&2; exit 1; }
 	[[ ! -e $f && ! -L $f ]] || { echo "stale staged token $f: deliver or shred it first" >&2; exit 1; }' _ "$STAGE_DIR" "$STAGED"
 
-cleanup() { [[ -e $OUT ]] && shred -u -- "$OUT" 2>/dev/null || true; }
-trap cleanup EXIT
-
+# No shred trap: once provisioning has registered the device, its 0600 root copy is the only
+# recovery path, so on any later failure it is KEPT (and the message says where).
 LBS_VAULT_DIR=$DIR LBS_VAULT_OWNER=$OWNER /usr/bin/python3 -I -B -c \
 	'import sys; sys.path.insert(0, sys.argv[1]); del sys.argv[1]; from lbs_vault.provision import main; main()' \
 	"$LIB" --device "$DEVICE" --owner "$OWNER" --output "$OUT"
 echo "provisioned device $DEVICE"
-
-systemctl restart lbs-vault.service
-systemctl is-active --quiet lbs-vault.service || die "lbs-vault.service not active after restart"
-echo "restarted lbs-vault.service (gateway untouched)"
 
 # Stage as leo: leo's own umask/ownership, refuse to overwrite, no token in argv.
 runuser -u "$STAGE_USER" -- /bin/bash --noprofile --norc -c '
@@ -71,9 +68,14 @@ runuser -u "$STAGE_USER" -- /bin/bash --noprofile --norc -c '
 	[[ ! -L $d && -O $d && $(stat -c %a -- "$d") == 700 ]] || { echo "unsafe staging dir" >&2; exit 1; }
 	set -o noclobber
 	cat > "$f"
-	chmod 0600 -- "$f"' _ "$STAGE_DIR" "$STAGED" <"$OUT"
+	chmod 0600 -- "$f"' _ "$STAGE_DIR" "$STAGED" <"$OUT" \
+	|| die "staging failed; device $DEVICE is registered, root copy kept at $OUT for recovery"
+cmp -s -- "$OUT" "$STAGED" || die "staged copy differs; root copy kept at $OUT for recovery"
 
 shred -u -- "$OUT"
-trap - EXIT
 echo "staged for $STAGE_USER delivery at $STAGED (0600); root copy shredded"
+
+systemctl restart lbs-vault.service
+systemctl is-active --quiet lbs-vault.service || die "lbs-vault.service not active after restart (token stays staged)"
+echo "restarted lbs-vault.service (gateway untouched)"
 echo "next (as $STAGE_USER): scripts/deliver-device-token.sh $DEVICE"
