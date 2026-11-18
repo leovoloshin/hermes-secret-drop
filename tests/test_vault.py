@@ -1752,3 +1752,122 @@ def test_use_transport_loss_reports_unknown_not_safe_to_retry(vault, monkeypatch
     finally:
         listener.close()
         worker.join(2)
+
+
+# --------------------------------------------------------------------------- Telegram group topics
+
+LBS_GR = "-1003820360721"
+TOPIC = "4242"
+BOT_ID = "8421530159"
+
+
+def _group_turn(vault, *, actor="10001", chat_id=LBS_GR, thread=TOPIC, user_id="", chat_type="forum",
+                merged=False, event=None):
+    """Bind a Telegram group-topic turn the way Hermes does: route vars plus the turn's actor/event."""
+    from contextvars import ContextVar
+    ctx = vault.context
+    for name, value in (("_SESSION_CHAT_TYPE", chat_type), ("_SESSION_CHAT_ID", chat_id),
+                        ("_SESSION_USER_ID", user_id)):
+        getattr(ctx, name).set(value)
+    for name, value in (("_SESSION_ACTOR_ID", actor), ("_SESSION_THREAD_ID", thread),
+                        ("_SESSION_TURN_EVENT", event or types.SimpleNamespace(user_id="" if merged else actor, internal=False))):
+        if not hasattr(ctx, name):
+            setattr(ctx, name, ContextVar(name, default=None))
+        getattr(ctx, name).set(value)
+
+
+def test_group_owner_turn_creates_topic_bound_request(vault):
+    _group_turn(vault)
+    req = vault.tool(plugin.vault_request, {"handle": "sid-api-key", "purpose": PURPOSE, "kind": "secret"})
+    assert set(req) == {"id", "link", "status", "expires_at", "next_step"} and req["status"] == "pending"
+    # Group instructions: one plain sentence, no handle in the chat text.
+    assert "same topic" in req["next_step"] and "without the handle" in req["next_step"]
+    # The app re-fetches metadata and learns where the button may render.
+    code, meta = vault.status(req["id"])
+    assert code == 200 and meta["origin"] == {"chat_id": LBS_GR, "thread_id": TOPIC}
+    # Same topic sees it; the end-to-end save still works and consumes the request.
+    assert vault.tool(plugin.vault_status, {"id": req["id"]}) == {"status": "pending"}
+    assert vault.tool(plugin.vault_list) == {"error": "not_in_group", "hint": "vault_list works only in Leo's DM"}
+    code, saved = vault.save(handle="sid-api-key", request_id=req["id"])
+    assert (code, saved) == (200, {"saved": "sid-api-key"})
+    assert vault.tool(plugin.vault_status, {"id": req["id"]})["status"] == "saved"
+    vault.assert_canary_absent_everywhere()
+
+
+@pytest.mark.parametrize("turn", [
+    dict(actor="20002"),                         # another group member
+    dict(actor=BOT_ID),                          # bot-originated turn
+    dict(actor=LBS_GR),                          # anonymous admin posts as the group
+    dict(chat_id="-1009999999999"),              # group not on the root allowlist
+    dict(merged=True),                           # someone else's input folded into Leo's turn
+    dict(user_id="20002"),                       # route bound to another user
+    dict(actor=None),                            # actor unbound
+    dict(chat_type="channel"),
+    dict(event=types.SimpleNamespace(user_id=None, internal=True)),   # plugin injection in Leo's session
+    dict(event=types.SimpleNamespace(user_id=None, internal=False)),  # background completion, actor inherited
+    dict(event=types.SimpleNamespace(user_id="10001")),               # no internal flag: fail closed
+])
+def test_group_non_owner_or_unknown_group_is_refused(vault, turn):
+    _group_turn(vault, **turn)
+    assert vault.tool(plugin.vault_request, {"handle": "sid-api-key", "purpose": PURPOSE,
+                                             "kind": "secret"}) == {"error": "forbidden_requester"}
+    assert vault.tool(plugin.vault_status, {"id": "A"*43}) == {"error": "forbidden_requester"}
+    assert [e for e in vault.audit_events() if e["handle"] == "sid-api-key"] == []
+
+
+def test_group_request_is_invisible_from_other_topic_group_or_dm(vault):
+    _group_turn(vault)
+    req = vault.tool(plugin.vault_request, {"handle": "sid-api-key", "purpose": PURPOSE, "kind": "secret"})
+    _group_turn(vault, thread="77")              # Leo, same group, wrong topic
+    assert vault.tool(plugin.vault_status, {"id": req["id"]}) == {"error": "not_found", "status": 404}
+    _group_turn(vault, actor="20002")            # other member, right topic
+    assert vault.tool(plugin.vault_status, {"id": req["id"]}) == {"error": "forbidden_requester"}
+    for name, value in (("_SESSION_CHAT_TYPE", "dm"), ("_SESSION_CHAT_ID", "10001"), ("_SESSION_USER_ID", "10001")):
+        getattr(vault.context, name).set(value)
+    assert vault.tool(plugin.vault_status, {"id": req["id"]}) == {"error": "not_found", "status": 404}
+
+
+def test_group_allowlist_comes_from_root_policy(vault):
+    path = vault.base / "principals.json"
+    path.write_text(json.dumps({"owner": OWNER, "telegram_user_id": "10001", "allowed_group_chat_ids": ["-1005550001"]}))
+    _group_turn(vault)                           # default Lbs-gr no longer allowed once root narrows it
+    assert vault.tool(plugin.vault_list) == {"error": "forbidden_requester"}
+    _group_turn(vault, chat_id="-1005550001")
+    assert vault.tool(plugin.vault_status, {"id": "A"*43}) == {"error": "not_found", "status": 404}
+    path.write_text(json.dumps({"owner": OWNER, "telegram_user_id": "10001", "allowed_group_chat_ids": "-1005550001"}))
+    assert vault.tool(plugin.vault_list) == {"error": "forbidden_requester"}
+
+
+def test_dm_request_still_works_and_binds_dm(vault):
+    req = vault.tool(plugin.vault_request, {"handle": HANDLE, "purpose": PURPOSE, "kind": "secret"})
+    assert vault.status(req["id"])[1]["origin"] == {"chat_id": "10001", "thread_id": ""}
+    _group_turn(vault)
+    assert vault.tool(plugin.vault_status, {"id": req["id"]}) == {"error": "not_found", "status": 404}
+
+
+def test_agent_socket_rejects_malformed_origin(vault):
+    for origin in ({"chat_id": "abc", "thread_id": ""}, {"chat_id": LBS_GR}, {"chat_id": LBS_GR, "thread_id": "0"},
+                   {"chat_id": LBS_GR, "thread_id": "", "x": "1"}, "nope"):
+        reply = vault.agent_call({"op": "request", "handle": HANDLE, "purpose": PURPOSE, "kind": "secret",
+                                  "origin": origin})
+        assert reply == {"error": "invalid_origin", "status": 400}
+
+
+# --------------------------------------------------------------------------- pairing delivery
+
+@pytest.mark.parametrize("doc,rc", [
+    ('{"info":{"outcome":"success"},"result":{"files":[{"name":"lbs_vault_token"}]}}', 0),
+    ('{"info":{"outcome":"success"},"result":{"files":[]}}', 1),
+    ('{"info":{"outcome":"succ', 2),
+    ('not json', 2),
+    ('{"info":{"outcome":"success"},"result":[]}', 2),
+    ('{"info":{"outcome":"success"},"result":{}}', 2),
+    ('{"info":{"outcome":"failed"},"result":{"files":[]}}', 2),
+])
+def test_delivery_listing_parser_reports_absent_only_on_valid_listing(tmp_path, doc, rc):
+    # Exit 1 makes deliver-device-token.sh shred the staged token: only a valid empty listing may yield it.
+    script = (ROOT / "scripts" / "deliver-device-token.sh").read_text()
+    parser = script.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    listing = tmp_path / "listing.json"
+    listing.write_text(doc)
+    assert subprocess.run([sys.executable, "-c", parser, str(listing)], capture_output=True).returncode == rc
