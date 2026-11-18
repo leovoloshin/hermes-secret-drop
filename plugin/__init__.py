@@ -45,47 +45,94 @@ def _socket_path() -> str:
 def _error(code: str, **extra) -> str:
     return json.dumps({"error": code, **extra})
 
-def _requester_allowed() -> bool:
-    """Use bound gateway identity only; never tool arguments or env identity."""
+DEFAULT_GROUP_CHAT_IDS = ("-1003820360721",)  # Lbs-gr; root may override in principals.json
+GROUP_CHAT_TYPES = ("group", "forum")
+_CHAT_ID = re.compile(r"-[1-9][0-9]{0,19}\Z")
+_THREAD_ID = re.compile(r"[1-9][0-9]{0,19}\Z")
+
+
+def _policy() -> dict | None:
+    """Root-owned private policy; optional allowed_group_chat_ids defaults to Leo's Lbs-gr."""
+    path=Path(os.environ.get('LBS_VAULT_PRINCIPALS') or
+              str(Path(os.environ.get('LBS_VAULT_DIR','/root/.hermes/lbs-vault'))/'principals.json'))
+    parent=path.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid!=os.geteuid() or stat.S_IMODE(parent.st_mode)!=0o700:
+        return None
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as f:
+        st=os.fstat(f.fileno())
+        if st.st_size>4096: return None
+        if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.geteuid() or stat.S_IMODE(st.st_mode)!=0o600 or st.st_nlink!=1:
+            return None
+        policy=json.loads(f.read(4097))
+    if not isinstance(policy,dict) or not {'owner','telegram_user_id'}<=set(policy)<={'owner','telegram_user_id','allowed_group_chat_ids'}:
+        return None
+    expected=policy['telegram_user_id']
+    if (policy['owner']!=os.environ.get('LBS_VAULT_OWNER','leo') or not isinstance(expected,str)
+            or re.fullmatch(r'[1-9][0-9]{0,19}',expected) is None):
+        return None
+    groups=policy.get('allowed_group_chat_ids',list(DEFAULT_GROUP_CHAT_IDS))
+    if not isinstance(groups,list) or len(groups)>16 or not all(isinstance(g,str) and _CHAT_ID.fullmatch(g) for g in groups):
+        return None
+    return {'telegram_user_id':expected,'groups':frozenset(groups)}
+
+
+def _requester_origin() -> dict | None:
+    """Chat/topic of an owner-authored turn, else None. Gateway ContextVars only; never tool
+    arguments or env. DM: chat_id == user_id == owner. Group: allowlisted group whose turn actor
+    (the trusted sender) is the owner, with no other sender's input folded into the turn."""
     try:
         from gateway import session_context
         if not session_context.bound_session_key():
-            return False
+            return None
         # Hermes' public get_session_env falls back to process env. Its current
         # task-local vars have no such fallback; an API change must deny, not
         # silently borrow another turn's identity.
         values = [getattr(session_context, name).get() for name in
-                  ('_SESSION_PLATFORM','_SESSION_CHAT_TYPE','_SESSION_CHAT_ID','_SESSION_USER_ID')]
+                  ('_SESSION_PLATFORM','_SESSION_CHAT_TYPE','_SESSION_CHAT_ID')]
         if not all(isinstance(v,str) and v for v in values):
-            return False
-        platform, chat_type, chat_id, user_id = values
-        if platform!='telegram' or chat_type not in ('dm','private') or chat_id!=user_id:
-            return False
-        path=Path(os.environ.get('LBS_VAULT_PRINCIPALS') or
-                  str(Path(os.environ.get('LBS_VAULT_DIR','/root/.hermes/lbs-vault'))/'principals.json'))
-        parent=path.parent.lstat()
-        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid!=os.geteuid() or stat.S_IMODE(parent.st_mode)!=0o700:
-            return False
-        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
-        with os.fdopen(fd,'rb') as f:
-            st=os.fstat(f.fileno())
-            if st.st_size>4096: return False
-            if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.geteuid() or stat.S_IMODE(st.st_mode)!=0o600 or st.st_nlink!=1:
-                return False
-            policy=json.loads(f.read(4097))
-        expected=policy.get('telegram_user_id')
-        return (set(policy)=={'owner','telegram_user_id'} and
-                policy['owner']==os.environ.get('LBS_VAULT_OWNER','leo') and
-                isinstance(expected,str) and re.fullmatch(r'[1-9][0-9]{0,19}',expected) is not None and
-                user_id==expected)
+            return None
+        platform, chat_type, chat_id = values
+        if platform!='telegram':
+            return None
+        policy=_policy()
+        if policy is None:
+            return None
+        owner=policy['telegram_user_id']
+        user_id=session_context._SESSION_USER_ID.get()
+        if chat_type in ('dm','private'):
+            if user_id==owner and chat_id==owner:
+                return {'chat_id':chat_id,'thread_id':''}
+            return None
+        if chat_type not in GROUP_CHAT_TYPES or chat_id not in policy['groups']:
+            return None
+        actor=session_context._SESSION_ACTOR_ID.get()
+        event=session_context._SESSION_TURN_EVENT.get()
+        # Only a message Leo typed in this turn: internal/injected/background turns (user_id None,
+        # actor inherited from the shared session) and merged turns (user_id "") are refused.
+        if (actor!=owner or event is None or getattr(event,'internal',True) is not False
+                or getattr(event,'user_id',None)!=owner):
+            return None
+        if user_id not in ('',owner):  # route bound to someone else
+            return None
+        thread=session_context._SESSION_THREAD_ID.get()
+        if not isinstance(thread,str):
+            thread=''
+        if thread and not _THREAD_ID.fullmatch(thread):
+            return None
+        return {'chat_id':chat_id,'thread_id':thread}
     except Exception:
-        return False
+        return None
 
 
-def _agent_call(payload: dict, *, timeout: float = META_TIMEOUT_S, socket_path: str | None = None) -> dict:
+def _agent_call(payload: dict, *, timeout: float = META_TIMEOUT_S, socket_path: str | None = None,
+                bind_origin: bool = False) -> dict:
     """Send one JSON line to the vault agent socket and return the one-line JSON reply."""
-    if not _requester_allowed():
+    origin=_requester_origin()
+    if origin is None:
         return {'error':'forbidden_requester'}
+    if bind_origin:
+        payload={**payload,'origin':origin}
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.settimeout(timeout)
@@ -117,7 +164,14 @@ def _text(args: dict, key: str, maximum: int) -> str | None:
     return value
 
 
+def _in_group() -> bool:
+    return (_requester_origin() or {}).get("chat_id", "").startswith("-")
+
+
 def vault_list(args: dict | None = None, **_kwargs) -> str:
+    # Group sessions are shared history: never put the vault inventory there.
+    if _in_group():
+        return _error("not_in_group", hint="vault_list works only in Leo's DM")
     reply = _agent_call({"op": "list"})
     return json.dumps(reply)
 
@@ -139,16 +193,28 @@ def vault_request(args: dict, **_kwargs) -> str:
         if type(ttl) is not int or not 60 <= ttl <= 600:
             return _error("invalid_ttl", hint="ttl_s must be an integer from 60 to 600")
         payload["ttl_s"] = ttl
-    reply = _agent_call(payload)
+    group = _in_group()
+    reply = _agent_call(payload, bind_origin=True)
     if "error" not in reply and isinstance(reply.get("link"), str):
-        reply["next_step"] = (
-            "Send Leo exactly one message: one plain sentence saying what it is for (e.g. 'LBS needs the sudo "
-            "password for thedoorpc.'), then on its own line 'Give it here: " + reply["link"] + "' so Rubric "
-            "shows a single 'Give it here' button that opens the masked "
-            + ("username + password form" if kind == "login" else "field")
-            + ". Do not ask him to type the secret in chat. After he saves, the button reads 'Saved' and "
-            "vault_status reports saved; nothing returns the value."
-        )
+        if group:
+            # Shared group history: return no handle, purpose or kind.
+            reply = {k: reply[k] for k in ("id", "link", "status", "expires_at")}
+            reply["next_step"] = (
+                "Reply in this same topic with exactly one plain sentence of what it is for, without the handle, "
+                "username or any other detail (e.g. 'LBS needs the API key for this task.'), then on its own line "
+                "'Give it here: " + reply["link"] + "'. Rubric shows the 'Give it here' button only to Leo and only "
+                "in this topic. Do not ask him to type the secret in chat. After he saves, vault_status from this "
+                "topic reports saved; nothing returns the value."
+            )
+        else:
+            reply["next_step"] = (
+                "Send Leo exactly one message: one plain sentence saying what it is for (e.g. 'LBS needs the sudo "
+                "password for thedoorpc.'), then on its own line 'Give it here: " + reply["link"] + "' so Rubric "
+                "shows a single 'Give it here' button that opens the masked "
+                + ("username + password form" if kind == "login" else "field")
+                + ". Do not ask him to type the secret in chat. After he saves, the button reads 'Saved' and "
+                "vault_status reports saved; nothing returns the value."
+            )
     return json.dumps(reply)
 
 
@@ -156,7 +222,10 @@ def vault_status(args: dict, **_kwargs) -> str:
     rid = (args or {}).get("id")
     if not isinstance(rid, str) or not REQUEST_ID.fullmatch(rid):
         return _error("invalid_id")
-    return json.dumps(_agent_call({"op": "status", "id": rid}))
+    reply = _agent_call({"op": "status", "id": rid}, bind_origin=True)
+    if _in_group() and "status" in reply and "error" not in reply:
+        reply = {"status": reply["status"]}
+    return json.dumps(reply)
 
 
 def vault_use(args: dict, **_kwargs) -> str:
@@ -242,8 +311,9 @@ _PROMPT = (
     "'saved' for that handle. To use a secret, call vault_use with an approved template_id and its bound handle; the stored "
     "fields are supplied on protected stdin by a root broker and the secret is never returned by these tools "
     "(a login username is metadata and may appear). Root terminal/code tools can still read root files and are "
-    "trusted, not sandboxed by this plugin. Use only in Leo's owner-only gateway context, never shared/group "
-    "contexts. Never automatically retry vault_use after a timeout, transport or audit error: it may already "
+    "trusted, not sandboxed by this plugin. Works only on Leo's own turns: his DM, or a topic of a root-allowlisted "
+    "group of his; in a group, the request message is one plain sentence with no handle, username or other "
+    "vault metadata, and never paste vault_list output there. Never automatically retry vault_use after a timeout, transport or audit error: it may already "
     "have run; ask Leo to verify the target state before another use. Do not print, decode, or exfiltrate "
     "secret values."
 )

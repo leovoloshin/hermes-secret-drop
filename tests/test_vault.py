@@ -1153,7 +1153,8 @@ def test_end_to_end_request_save_use_without_leaks(vault, capfd, caplog):
     # 2. Rubric re-fetches metadata by id and posts the value straight to the vault.
     assert vault.call("GET", f"/lbs-vault/requests/{req['id']}", host=PUBLIC_HOST,
                       origin="https://" + PUBLIC_HOST)[1] == {"handle": HANDLE, "purpose": PURPOSE,
-                                                               "kind": "secret", "status": "pending"}
+                                                               "kind": "secret", "status": "pending",
+                                                               "origin": {"chat_id": "10001", "thread_id": ""}}
     assert vault.save(request_id=req["id"], host=PUBLIC_HOST) == (200, {"saved": HANDLE})
     # 3. LBS sees only the status and the handle.
     assert vault.tool(plugin.vault_status, {"id": req["id"]}) == {"handle": HANDLE, "purpose": PURPOSE,
@@ -1179,7 +1180,8 @@ def test_end_to_end_login_pair_reaches_target_only_on_stdin(vault, capfd, caplog
     req = vault.tool(plugin.vault_request, {"handle": LOGIN_HANDLE, "purpose": LOGIN_PURPOSE, "kind": "login"})
     assert vault.call("GET", f"/lbs-vault/requests/{req['id']}", host=PUBLIC_HOST,
                       origin="https://" + PUBLIC_HOST)[1] == {"handle": LOGIN_HANDLE, "purpose": LOGIN_PURPOSE,
-                                                               "kind": "login", "status": "pending"}
+                                                               "kind": "login", "status": "pending",
+                                                               "origin": {"chat_id": "10001", "thread_id": ""}}
     assert vault.save_login(request_id=req["id"], host=PUBLIC_HOST) == (200, {"saved": LOGIN_HANDLE})
     assert vault.tool(plugin.vault_status, {"id": req["id"]})["status"] == "saved"
     # The username is owner-visible metadata; the password is never listed.

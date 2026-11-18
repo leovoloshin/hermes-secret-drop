@@ -36,8 +36,9 @@ def main():
         if args.telegram_owner_id is not None:
             policy={'owner':args.owner,'telegram_user_id':args.telegram_owner_id}
             existing=json.loads(read_private(principals)) if principals.exists() else {}
-            if existing and existing!=policy:
+            if existing and {k:existing.get(k) for k in policy}!=policy:
                 raise SystemExit('owner principal already configured; review it explicitly before replacement')
+            if existing: policy=None  # keep existing file, including any root-set allowed_group_chat_ids
         token=secrets.token_urlsafe(32)
         fd=os.open(args.output,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
         with os.fdopen(fd,'w') as f:

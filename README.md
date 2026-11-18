@@ -7,7 +7,8 @@ Encrypted Spark vault service, root broker, and staged handle-only Hermes plugin
 - `lbs_vault/store.py`: whole-document Fernet encryption, owner binding, single-use expiring requests, private atomic storage and metadata audit.
 - `lbs_vault/service.py`: loopback-only HTTP entry with per-device bearer auth, bounded bodies, Host/Origin checks, rate limiting; root-only Unix agent socket.
 - `lbs_vault/broker.py`: separate root process, kind/handle-bound approved target templates, credential fields on protected stdin only, timeout/output bounds and exact password redaction.
-- `plugin/`: install under `/root/.hermes/plugins/lbs-vault/`; tools list/request/status/use only, bound to one verified Telegram owner's direct chat using private policy and task-local gateway identity. No get tool or generic env injection.
+- `plugin/`: install under `/root/.hermes/plugins/lbs-vault/`; tools list/request/status/use only, bound to the verified Telegram owner's own turns (his DM, or a topic of a root-allowlisted group) using private policy and task-local gateway identity; requests are bound to the asking chat/topic. No get tool or generic env injection.
+- `scripts/pair-device.sh` (root) and `scripts/deliver-device-token.sh` (leo): provision a native client with installed code and deliver its bearer to the iPhone (devicectl over lbm) or Mac (TGLens tdata), verifying import and shredding staged copies.
 - `scripts/install.sh`, `scripts/uninstall.sh`, `systemd/`: root operator deployment, preserving unrelated Tailscale paths; no gateway restart.
 
 Default storage `/root/.hermes/lbs-vault/`, `LBS_VAULT_DIR` overrides for isolated testing. Default HTTP loopback port **938**, `LBS_VAULT_PORT` overrides only within the kernel-protected privileged range; the service must not be impersonable by a non-root local port squatter while stopped. No package installation or network downloads at install time; system Python 3 with cryptography is required. See [keys and recovery](docs/KEYS.md), [broker configuration](docs/BROKER.md), and [isolated verification](docs/TESTING.md).
@@ -33,3 +34,5 @@ The root agent trust boundary is explicit: same-privilege malicious code can rea
 2026-10-31 on-demand cutover: mandatory `secret|login` request/save kinds, request-only saves, atomic encrypted login pairs, kind-bound broker stdin templates, and required plugin kind enum. Existing untyped requests/credentials require re-entry; no implicit kind defaults.
 
 The cutover also fixes a pre-existing partial-password redaction gap at timeout/drain/output-limit boundaries. Final sandbox proof: 192 tests, plus a separate 29-check real-daemon kind-cutover smoke; details and live-versus-sandbox provenance are in `docs/TESTING.md`.
+
+2026-11-17 P0 go-live: owner turns in Leo's allowlisted Telegram groups (default Lbs-gr `-1003820360721`, root key `allowed_group_chat_ids` in `principals.json`) may use the plugin; requests carry `origin {chat_id, thread_id}` and are invisible from other chats/topics; client GET returns `origin` so native apps show **Give it here** only there. Added pairing/delivery scripts. Plugin changes take effect only after Leo's gateway `/restart`.

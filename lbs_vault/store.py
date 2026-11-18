@@ -44,6 +44,17 @@ def kind_valid(value):
         raise VaultError(400, "invalid_kind")
     return value
 
+CHAT_ID = re.compile(r"-?[1-9][0-9]{0,19}\Z")
+THREAD_ID = re.compile(r"(?:[1-9][0-9]{0,19})?\Z")
+
+def origin_valid(value):
+    """Telegram chat/topic a request is bound to; thread_id "" means no topic."""
+    if (not isinstance(value, dict) or set(value) != {"chat_id", "thread_id"}
+            or not isinstance(value["chat_id"], str) or not CHAT_ID.fullmatch(value["chat_id"])
+            or not isinstance(value["thread_id"], str) or not THREAD_ID.fullmatch(value["thread_id"])):
+        raise VaultError(400, "invalid_origin")
+    return {"chat_id": value["chat_id"], "thread_id": value["thread_id"]}
+
 def private_dir(path):
     path = Path(path)
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -149,8 +160,10 @@ class Store:
                 if fd>=0: os.close(fd)
         finally: os.close(lock_fd)
 
-    def request(self, owner, handle, purpose, kind, ttl=600):
+    def request(self, owner, handle, purpose, kind, ttl=600, origin=None):
         text(owner, 64); handle_valid(handle); text(purpose, 256); kind_valid(kind)
+        if origin is not None:
+            origin = origin_valid(origin)
         if type(ttl) is not int or not 1 <= ttl <= 600:
             raise VaultError(400, "invalid_ttl")
         with self.transaction(owner) as d:
@@ -159,11 +172,13 @@ class Store:
             rid = secrets.token_urlsafe(32)
             r = dict(owner=owner, handle=handle, purpose=purpose, kind=kind,
                      expires_at=time.time()+ttl, status="pending")
+            if origin is not None:
+                r["origin"] = origin
             d["requests"][rid] = r
             self.persist(d, owner)
             self.audit(owner, handle, "request", "pending")
             return dict(id=rid, link="tglens://vault?req="+rid,
-                        **{k: v for k, v in r.items() if k != "owner"})
+                        **{k: v for k, v in r.items() if k not in ("owner", "origin")})
 
     def _request(self, d, owner, rid):
         if not isinstance(rid, str) or not ID.fullmatch(rid):
@@ -182,11 +197,19 @@ class Store:
         if r["status"] != "pending":
             raise VaultError(409, "consumed")
 
-    def status(self, owner, rid):
+    def status(self, owner, rid, origin=UNSET, include_origin=False):
+        """origin given (agent path): a request bound to another chat/topic reads as unknown."""
+        if origin is not UNSET and origin is not None:
+            origin = origin_valid(origin)
         with self.transaction(owner) as d:
             r = self._request(d, owner, rid)
+            if origin is not UNSET and r.get("origin") != origin:
+                raise VaultError(404, "not_found")
             status = "expired" if r["expires_at"] <= time.time() and r["status"] == "pending" else r["status"]
-            return {k: r[k] for k in ("handle", "purpose", "kind")} | {"status": status}
+            result = {k: r[k] for k in ("handle", "purpose", "kind")} | {"status": status}
+            if include_origin and "origin" in r:
+                result["origin"] = dict(r["origin"])
+            return result
 
     def cancel(self, owner, rid):
         with self.transaction(owner) as d:

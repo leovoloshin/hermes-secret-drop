@@ -159,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
         pieces=path.strip('/').split('/')
         if len(pieces)>=2 and pieces[0]=='requests':
             rid=pieces[1]
-            if self.command=='GET' and len(pieces)==2: return self.server.store.status(owner,rid)
+            if self.command=='GET' and len(pieces)==2: return self.server.store.status(owner,rid,include_origin=True)
             if self.command=='POST' and len(pieces)==3 and pieces[2]=='cancel':
                 if self.body(): raise VaultError(400,'malformed')
                 return self.server.store.cancel(owner,rid)
@@ -192,8 +192,9 @@ class AgentHandler(socketserver.StreamRequestHandler):
             op=b.get('op'); owner=self.server.owner; store=self.server.store
             from .broker import list_templates, request_use
             if op=='list' and set(b)=={'op'}: result={'secrets':store.list(owner),'templates':list_templates()}
-            elif op=='request' and set(b)<= {'op','handle','purpose','kind','ttl_s'} and {'handle','purpose'}<=set(b): result=store.request(owner,b['handle'],b['purpose'],b.get('kind'),b.get('ttl_s',600))
+            elif op=='request' and set(b)<= {'op','handle','purpose','kind','ttl_s','origin'} and {'handle','purpose'}<=set(b): result=store.request(owner,b['handle'],b['purpose'],b.get('kind'),b.get('ttl_s',600),b.get('origin'))
             elif op=='status' and set(b)=={'op','id'}: result=store.status(owner,b['id'])
+            elif op=='status' and set(b)=={'op','id','origin'}: result=store.status(owner,b['id'],origin=b['origin'])
             elif op=='use' and set(b)=={'op','template_id','handle'}: result=request_use(owner,b['template_id'],b['handle'])
             else: raise VaultError(400,'malformed')
         except VaultError as e: result={'error':e.code,'status':e.status}
