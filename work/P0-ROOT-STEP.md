@@ -2,16 +2,16 @@
 
 **For LBS to review and run as root, once. The vault owner does not run it.**
 
-Source commit: `34898d2993b63889c6ff2563a58d0ff5f62d3d69` (pushed).
-Private, git-ignored archive: `/home/leo/lbs-secret-vault/work/live-probe-p0-go-live/release-34898d2.tar` (0600 leo, parent 0700).
-SHA-256: `ee168fbaeff94c4b5c4adf0d9d1802014429a8ae00f39fb111d8f7aa6f526516`.
+Source commit: `a0c50273d7ba52bdc12301fc5b49e9394ac1b85f` (pushed).
+Private, git-ignored archive: `/home/leo/lbs-secret-vault/work/live-probe-p0-go-live/release-a0c5027.tar` (0600 leo, parent 0700).
+SHA-256: `7799bd00eb15ad00619a24d1067980c92e49f0ffb7fe48019400a69ec28a8707`.
 
 Reproduce as leo before running (fresh bare clone, pinned settings; must print the digest above):
 
 ```sh
 repro=$(mktemp -d /home/leo/lbs-secret-vault/work/live-probe-p0-go-live/independent.XXXXXX)
 git -c core.hooksPath=/dev/null clone --bare --no-hardlinks /home/leo/lbs-secret-vault "$repro/repro.git"
-git --git-dir="$repro/repro.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null -c tar.umask=0002 archive --format=tar --output="$repro/release.tar" 34898d2993b63889c6ff2563a58d0ff5f62d3d69 lbs_vault plugin scripts/install.sh scripts/uninstall.sh scripts/pair-device.sh systemd
+git --git-dir="$repro/repro.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null -c tar.umask=0002 archive --format=tar --output="$repro/release.tar" a0c50273d7ba52bdc12301fc5b49e9394ac1b85f lbs_vault plugin scripts/install.sh scripts/uninstall.sh scripts/pair-device.sh systemd
 sha256sum "$repro/release.tar"
 ```
 
@@ -31,10 +31,10 @@ After `LBS-VAULT-P0-ROOT-COMPLETE`, as leo: `scripts/deliver-device-token.sh rub
 import hashlib, io, json, os, pwd, signal, stat, subprocess, sys, tarfile, tempfile
 from pathlib import Path, PurePosixPath
 
-COMMIT = '34898d2993b63889c6ff2563a58d0ff5f62d3d69'
-DIGEST = 'ee168fbaeff94c4b5c4adf0d9d1802014429a8ae00f39fb111d8f7aa6f526516'
+COMMIT = 'a0c50273d7ba52bdc12301fc5b49e9394ac1b85f'
+DIGEST = '7799bd00eb15ad00619a24d1067980c92e49f0ffb7fe48019400a69ec28a8707'
 HANDOFF = Path('/home/leo/lbs-secret-vault/work/live-probe-p0-go-live')
-ARCHIVE = 'release-34898d2.tar'
+ARCHIVE = 'release-a0c5027.tar'
 BASE = Path('/root/.hermes/lbs-vault')
 PAIR = ('rubric-iphone', 'rubric-mac')
 ENV = {'PATH':'/usr/sbin:/usr/bin:/sbin:/bin', 'HOME':'/root', 'LC_ALL':'C'}
@@ -56,7 +56,7 @@ ERROR_CODES = {
     'vault_unit_identity_unchanged','install_interrupted_requires_review',
     'serve_or_funnel_changed','gateway_identity_or_state_changed',
     'installed_code_mismatch','unauthenticated_probe_not_401',
-    'pair_registry_unexpected','pair_stage_unsafe','pair_root_copy_left',
+    'pair_registry_unexpected','pair_stage_unsafe','pair_root_copy_left','pair_preflight_unsafe',
 }
 result = {'status':'failed','stage':'preflight','source_commit':COMMIT}
 private = None
@@ -105,6 +105,8 @@ def mutate(label, args, log, cwd='/'):
             signal.signal(sig,interrupted)
     if code != 0:
         raise subprocess.CalledProcessError(code,[label])
+    if result.get('interrupt_during_mutation'):
+        raise KeyboardInterrupt  # never start the next mutation after a signal
 
 
 def interrupted(_signum, _frame):
@@ -202,6 +204,21 @@ try:
             pending.extend(node.iterdir())
     if set(PAIR) & set(device_ids()):
         raise RuntimeError('device_already_registered')
+    # Pairing preconditions for BOTH devices before anything mutates.
+    try:
+        pp = Path('/root/private/lbs-vault-pair').lstat()
+        if (not stat.S_ISDIR(pp.st_mode) or pp.st_uid != 0 or stat.S_IMODE(pp.st_mode) != 0o700
+                or any(Path('/root/private/lbs-vault-pair').iterdir())):
+            raise RuntimeError('pair_preflight_unsafe')
+    except FileNotFoundError:
+        pass
+    try:
+        sp = (Path(leo.pw_dir)/'.lbs-vault-pair').lstat()
+        if (not stat.S_ISDIR(sp.st_mode) or sp.st_uid != leo.pw_uid or stat.S_IMODE(sp.st_mode) != 0o700
+                or any(os.path.lexists(Path(leo.pw_dir)/'.lbs-vault-pair'/(d+'.token')) for d in PAIR)):
+            raise RuntimeError('pair_preflight_unsafe')
+    except FileNotFoundError:
+        pass
     protected = [BASE/'devices.json', BASE/'templates.json', BASE/'principals.json',
                  BASE/'keys/vault.key', Path('/root/.hermes/config.yaml')]
     required = {'devices.json','templates.json','principals.json','vault.key'}
@@ -270,11 +287,18 @@ try:
         unauth_401(log)
         result['installed'] = True
         result['stage'] = 'pair'
-        ids_before = device_ids()
+        registry_before = json.loads((BASE/'devices.json').read_bytes())['devices']
         for device in PAIR:
             mutate('pair:'+device,['/bin/bash','--noprofile','--norc',str(source/'scripts/pair-device.sh'),device],log)
         result['stage'] = 'verify_pair'
-        if device_ids() != ids_before+list(PAIR):
+        metadata(BASE/'devices.json', True)
+        if stat.S_IMODE((BASE/'devices.json').lstat().st_mode) != 0o600:
+            raise RuntimeError('protected_metadata_changed')
+        registry_after = json.loads((BASE/'devices.json').read_bytes())['devices']
+        added = registry_after[len(registry_before):]
+        if (registry_after[:len(registry_before)] != registry_before
+                or [d.get('id') for d in added] != list(PAIR)
+                or any(set(d) != {'id','owner','token_sha256','expires_at'} or d['owner'] != 'leo' for d in added)):
             raise RuntimeError('pair_registry_unexpected')
         if {str(p):metadata(p, p.name in required) for p in protected if p.name != 'devices.json'} != \
                 {k:v for k,v in before_files.items() if not k.endswith('/devices.json')}:
@@ -303,7 +327,8 @@ try:
                   gateway_restart_needed_for_plugin=True,plugin_enable_attempted=False,
                   request_creation_attempted=False)
     if result.get('interrupt_during_mutation'):
-        result['error_code'] = 'install_interrupted_requires_review'
+        result['error_code'] = 'interrupted_requires_review'
+        result['outcome'] = 'uncertain'
 except BaseException as exc:
     result['error_class'] = type(exc).__name__
     if isinstance(exc,(RuntimeError,PermissionError)) and exc.args and exc.args[0] in ERROR_CODES:
