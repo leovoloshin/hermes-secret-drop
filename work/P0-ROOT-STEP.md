@@ -2,16 +2,16 @@
 
 **For LBS to review and run as root, once. The vault owner does not run it.**
 
-Source commit: `@COMMIT@` (pushed).
-Private, git-ignored archive: `/home/leo/lbs-secret-vault/work/live-probe-p0-go-live/release-@SHORT@.tar` (0600 leo, parent 0700).
-SHA-256: `@DIGEST@`.
+Source commit: `34898d2993b63889c6ff2563a58d0ff5f62d3d69` (pushed).
+Private, git-ignored archive: `/home/leo/lbs-secret-vault/work/live-probe-p0-go-live/release-34898d2.tar` (0600 leo, parent 0700).
+SHA-256: `ee168fbaeff94c4b5c4adf0d9d1802014429a8ae00f39fb111d8f7aa6f526516`.
 
 Reproduce as leo before running (fresh bare clone, pinned settings; must print the digest above):
 
 ```sh
 repro=$(mktemp -d /home/leo/lbs-secret-vault/work/live-probe-p0-go-live/independent.XXXXXX)
 git -c core.hooksPath=/dev/null clone --bare --no-hardlinks /home/leo/lbs-secret-vault "$repro/repro.git"
-git --git-dir="$repro/repro.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null -c tar.umask=0002 archive --format=tar --output="$repro/release.tar" @COMMIT@ lbs_vault plugin scripts/install.sh scripts/uninstall.sh scripts/pair-device.sh systemd
+git --git-dir="$repro/repro.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null -c tar.umask=0002 archive --format=tar --output="$repro/release.tar" 34898d2993b63889c6ff2563a58d0ff5f62d3d69 lbs_vault plugin scripts/install.sh scripts/uninstall.sh scripts/pair-device.sh systemd
 sha256sum "$repro/release.tar"
 ```
 
@@ -31,10 +31,10 @@ After `LBS-VAULT-P0-ROOT-COMPLETE`, as leo: `scripts/deliver-device-token.sh rub
 import hashlib, io, json, os, pwd, signal, stat, subprocess, sys, tarfile, tempfile
 from pathlib import Path, PurePosixPath
 
-COMMIT = '@COMMIT@'
-DIGEST = '@DIGEST@'
+COMMIT = '34898d2993b63889c6ff2563a58d0ff5f62d3d69'
+DIGEST = 'ee168fbaeff94c4b5c4adf0d9d1802014429a8ae00f39fb111d8f7aa6f526516'
 HANDOFF = Path('/home/leo/lbs-secret-vault/work/live-probe-p0-go-live')
-ARCHIVE = 'release-@SHORT@.tar'
+ARCHIVE = 'release-34898d2.tar'
 BASE = Path('/root/.hermes/lbs-vault')
 PAIR = ('rubric-iphone', 'rubric-mac')
 ENV = {'PATH':'/usr/sbin:/usr/bin:/sbin:/bin', 'HOME':'/root', 'LC_ALL':'C'}
